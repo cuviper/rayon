@@ -8,7 +8,7 @@ repository = "https://github.com/nikomatsakis/rayon"
 documentation = "https://docs.rs/rayon/"
 
 [workspace]
-members = ["rayon-demo", "rayon-core"]
+members = ["rayon-demo", "rayon-core", "rayon-hash"]
 
 [dependencies]
 rayon-core = { version = "0.1", path = "rayon-core" }

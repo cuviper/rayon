@@ -10,14 +10,14 @@
 
 use alloc::heap::{EMPTY, allocate, deallocate};
 
-use cmp;
-use hash::{BuildHasher, Hash, Hasher};
-use intrinsics::needs_drop;
-use marker;
-use mem::{align_of, size_of};
-use mem;
-use ops::{Deref, DerefMut};
-use ptr::{self, Unique, Shared};
+use std::cmp;
+use std::hash::{BuildHasher, Hash, Hasher};
+use std::intrinsics::needs_drop;
+use std::marker;
+use std::mem::{align_of, size_of};
+use std::mem;
+use std::ops::{Deref, DerefMut};
+use std::ptr::{self, Unique, Shared};
 
 use self::BucketState::*;
 
