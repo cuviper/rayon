@@ -16,6 +16,7 @@
 
 extern crate alloc;
 extern crate rand;
+extern crate rayon;
 
 pub use map::HashMap;
 pub use set::HashSet;

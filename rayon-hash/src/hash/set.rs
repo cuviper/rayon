@@ -17,6 +17,10 @@ use std::ops::{BitOr, BitAnd, BitXor, Sub};
 use super::Recover;
 use super::map::{self, HashMap, Keys, RandomState};
 
+#[path = "../par/set.rs"]
+mod par;
+pub use self::par::*;
+
 // Future Optimization (FIXME!)
 // =============================
 //
