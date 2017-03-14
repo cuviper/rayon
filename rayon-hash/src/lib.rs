@@ -21,6 +21,7 @@ extern crate rayon;
 pub use map::HashMap;
 pub use set::HashSet;
 
+mod bench;
 mod hash;
 
 pub mod map {
