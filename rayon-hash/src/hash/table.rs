@@ -12,12 +12,14 @@ use alloc::heap::{EMPTY, allocate, deallocate};
 
 use std::cmp;
 use std::hash::{BuildHasher, Hash, Hasher};
-use std::intrinsics::needs_drop;
+// use std::intrinsics::needs_drop;
 use std::marker;
 use std::mem::{align_of, size_of};
 use std::mem;
 use std::ops::{Deref, DerefMut};
-use std::ptr::{self, Unique, Shared};
+use std::ptr;
+
+use ptr::{Unique, Shared};
 
 use self::BucketState::*;
 
@@ -1193,7 +1195,8 @@ impl<K: Clone, V: Clone> Clone for RawTable<K, V> {
     }
 }
 
-unsafe impl<#[may_dangle] K, #[may_dangle] V> Drop for RawTable<K, V> {
+// unsafe impl<#[may_dangle] K, #[may_dangle] V> Drop for RawTable<K, V> {
+impl<K, V> Drop for RawTable<K, V> {
     fn drop(&mut self) {
         if self.capacity == 0 {
             return;
@@ -1205,10 +1208,10 @@ unsafe impl<#[may_dangle] K, #[may_dangle] V> Drop for RawTable<K, V> {
         // dropping empty tables such as on resize.
         // Also avoid double drop of elements that have been already moved out.
         unsafe {
-            if needs_drop::<(K, V)>() {
+            // if needs_drop::<(K, V)>() {
                 // avoid linear runtime for types that don't need drop
                 self.rev_drop_buckets();
-            }
+            // }
         }
 
         let hashes_size = self.capacity * size_of::<HashUint>();

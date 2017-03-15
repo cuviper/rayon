@@ -1014,6 +1014,7 @@ impl<K> ExactSizeIterator for IntoIter<K> {
 #[cfg_attr(stability, unstable(feature = "fused", issue = "35602"))]
 impl<K> FusedIterator for IntoIter<K> {}
 
+#[cfg(needs_pub_restricted)]
 #[cfg_attr(stability, stable(feature = "std_debug", since = "1.16.0"))]
 impl<K: fmt::Debug> fmt::Debug for IntoIter<K> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -1045,6 +1046,7 @@ impl<'a, K> ExactSizeIterator for Drain<'a, K> {
 #[cfg_attr(stability, unstable(feature = "fused", issue = "35602"))]
 impl<'a, K> FusedIterator for Drain<'a, K> {}
 
+#[cfg(needs_pub_restricted)]
 #[cfg_attr(stability, stable(feature = "std_debug", since = "1.16.0"))]
 impl<'a, K: fmt::Debug> fmt::Debug for Drain<'a, K> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

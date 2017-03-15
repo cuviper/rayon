@@ -11,12 +11,15 @@
 use self::Entry::*;
 use self::VacantEntryState::*;
 
+#[cfg(copy_std)]
 use std::cell::Cell;
 use std::borrow::Borrow;
 use std::cmp::max;
 use std::fmt::{self, Debug};
+use std::hash::{Hash, BuildHasher};
 #[allow(deprecated)]
-use std::hash::{Hash, Hasher, BuildHasher, SipHasher13};
+#[cfg(copy_std)]
+use std::hash::{Hasher, SipHasher13};
 use std::iter::FromIterator;
 #[cfg(unstable)]
 use std::iter::FusedIterator;
@@ -24,9 +27,13 @@ use std::mem::{self, replace};
 use std::ops::{Deref, Index};
 #[cfg(unstable)]
 use std::ops::{InPlace, Place, Placer};
+#[cfg(copy_std)]
 use rand::{self, Rng};
 #[cfg(unstable)]
 use std::ptr;
+
+#[cfg(not(copy_std))]
+pub use std::collections::hash_map::{DefaultHasher, RandomState};
 
 use super::table::{self, Bucket, EmptyBucket, FullBucket, FullBucketMut, RawTable, SafeHash};
 use super::table::BucketState::{Empty, Full};
@@ -1379,7 +1386,7 @@ pub struct IterMut<'a, K: 'a, V: 'a> {
 /// HashMap move iterator.
 #[cfg_attr(stability, stable(feature = "rust1", since = "1.0.0"))]
 pub struct IntoIter<K, V> {
-    pub(super) inner: table::IntoIter<K, V>,
+    /*pub(super)*/ inner: table::IntoIter<K, V>,
 }
 
 /// HashMap keys iterator.
@@ -1431,7 +1438,7 @@ impl<'a, K: Debug, V: Debug> fmt::Debug for Values<'a, K, V> {
 /// HashMap drain iterator.
 #[cfg_attr(stability, stable(feature = "drain", since = "1.6.0"))]
 pub struct Drain<'a, K: 'a, V: 'a> {
-    pub(super) inner: table::Drain<'a, K, V>,
+    /*pub(super)*/ inner: table::Drain<'a, K, V>,
 }
 
 /// Mutable HashMap values iterator.
@@ -2313,11 +2320,13 @@ impl<'a, K, V, S> Extend<(&'a K, &'a V)> for HashMap<K, V, S>
 /// ```
 #[derive(Clone)]
 #[cfg_attr(stability, stable(feature = "hashmap_build_hasher", since = "1.7.0"))]
+#[cfg(copy_std)]
 pub struct RandomState {
     k0: u64,
     k1: u64,
 }
 
+#[cfg(copy_std)]
 impl RandomState {
     /// Constructs a new `RandomState` that is initialized with random keys.
     ///
@@ -2359,6 +2368,7 @@ impl RandomState {
 }
 
 #[cfg_attr(stability, stable(feature = "hashmap_build_hasher", since = "1.7.0"))]
+#[cfg(copy_std)]
 impl BuildHasher for RandomState {
     type Hasher = DefaultHasher;
     #[inline]
@@ -2378,8 +2388,10 @@ impl BuildHasher for RandomState {
 #[cfg_attr(stability, stable(feature = "hashmap_default_hasher", since = "1.13.0"))]
 #[allow(deprecated)]
 #[derive(Debug)]
+#[cfg(copy_std)]
 pub struct DefaultHasher(SipHasher13);
 
+#[cfg(copy_std)]
 impl DefaultHasher {
     /// Creates a new `DefaultHasher`.
     ///
@@ -2394,6 +2406,7 @@ impl DefaultHasher {
 }
 
 #[cfg_attr(stability, stable(feature = "hashmap_default_hasher", since = "1.13.0"))]
+#[cfg(copy_std)]
 impl Default for DefaultHasher {
     /// Creates a new `DefaultHasher` using [`DefaultHasher::new`]. See
     /// [`DefaultHasher::new`] documentation for more information.
@@ -2405,6 +2418,7 @@ impl Default for DefaultHasher {
 }
 
 #[cfg_attr(stability, stable(feature = "hashmap_default_hasher", since = "1.13.0"))]
+#[cfg(copy_std)]
 impl Hasher for DefaultHasher {
     #[inline]
     fn write(&mut self, msg: &[u8]) {
@@ -2418,6 +2432,7 @@ impl Hasher for DefaultHasher {
 }
 
 #[cfg_attr(stability, stable(feature = "hashmap_build_hasher", since = "1.7.0"))]
+#[cfg(copy_std)]
 impl Default for RandomState {
     /// Constructs a new `RandomState`.
     #[inline]
@@ -2427,6 +2442,7 @@ impl Default for RandomState {
 }
 
 #[cfg_attr(stability, stable(feature = "std_debug", since = "1.16.0"))]
+#[cfg(copy_std)]
 impl fmt::Debug for RandomState {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.pad("RandomState { .. }")
