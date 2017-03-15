@@ -265,6 +265,7 @@ impl<K, V, M> FullBucket<K, V, M> {
         self.idx
     }
     /// Get the raw bucket.
+    #[cfg(unstable)]
     pub fn raw(&self) -> RawBucket<K, V> {
         self.raw
     }
@@ -335,6 +336,7 @@ impl<K, V, M: Deref<Target = RawTable<K, V>>> Bucket<K, V, M> {
         Bucket::at_index(table, hash.inspect() as usize)
     }
 
+    #[cfg(unstable)]
     pub fn new_from(r: RawBucket<K, V>, i: usize, t: M)
         -> Bucket<K, V, M>
     {
@@ -439,6 +441,7 @@ impl<K, V, M: Deref<Target = RawTable<K, V>>> Bucket<K, V, M> {
     }
 
     /// Modifies the bucket pointer in place to make it point to the previous slot.
+    #[cfg(unstable)]
     pub fn prev(&mut self) {
         let range = self.table.capacity();
         let new_idx = self.idx.wrapping_sub(1) & (range - 1);
@@ -513,6 +516,7 @@ impl<K, V, M> EmptyBucket<K, V, M>
 
     /// Puts given key, remain value uninitialized.
     /// It is only used for inplacement insertion.
+    #[cfg(unstable)]
     pub unsafe fn put_key(mut self, hash: SafeHash, key: K) -> FullBucket<K, V, M> {
         *self.raw.hash = hash.inspect();
         let pair_mut = self.raw.pair as *mut (K, V);
@@ -605,6 +609,7 @@ impl<'t, K, V> FullBucket<K, V, &'t mut RawTable<K, V>> {
     /// Remove this bucket's `key` from the hashtable.
     /// Only used for inplacement insertion.
     /// NOTE: `Value` is uninitialized when this function is called, don't try to drop the `Value`.
+    #[cfg(unstable)]
     pub unsafe fn remove_key(&mut self) {
         self.table.size -= 1;
 

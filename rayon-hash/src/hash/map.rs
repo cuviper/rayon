@@ -17,10 +17,15 @@ use std::cmp::max;
 use std::fmt::{self, Debug};
 #[allow(deprecated)]
 use std::hash::{Hash, Hasher, BuildHasher, SipHasher13};
-use std::iter::{FromIterator, FusedIterator};
+use std::iter::FromIterator;
+#[cfg(unstable)]
+use std::iter::FusedIterator;
 use std::mem::{self, replace};
-use std::ops::{Deref, Index, InPlace, Place, Placer};
+use std::ops::{Deref, Index};
+#[cfg(unstable)]
+use std::ops::{InPlace, Place, Placer};
 use rand::{self, Rng};
+#[cfg(unstable)]
 use std::ptr;
 
 use super::table::{self, Bucket, EmptyBucket, FullBucket, FullBucketMut, RawTable, SafeHash};
@@ -1244,6 +1249,7 @@ impl<K, V, S> HashMap<K, V, S>
     /// map.retain(|&k, _| k % 2 == 0);
     /// assert_eq!(map.len(), 4);
     /// ```
+    #[cfg(unstable)]
     #[cfg_attr(stability, unstable(feature = "retain_hash_collection", issue = "36648"))]
     pub fn retain<F>(&mut self, mut f: F)
         where F: FnMut(&K, &mut V) -> bool
@@ -1637,6 +1643,7 @@ impl<'a, K, V> ExactSizeIterator for Iter<'a, K, V> {
     }
 }
 
+#[cfg(unstable)]
 #[cfg_attr(stability, unstable(feature = "fused", issue = "35602"))]
 impl<'a, K, V> FusedIterator for Iter<'a, K, V> {}
 
@@ -1660,6 +1667,7 @@ impl<'a, K, V> ExactSizeIterator for IterMut<'a, K, V> {
         self.inner.len()
     }
 }
+#[cfg(unstable)]
 #[cfg_attr(stability, unstable(feature = "fused", issue = "35602"))]
 impl<'a, K, V> FusedIterator for IterMut<'a, K, V> {}
 
@@ -1695,6 +1703,7 @@ impl<K, V> ExactSizeIterator for IntoIter<K, V> {
         self.inner.len()
     }
 }
+#[cfg(unstable)]
 #[cfg_attr(stability, unstable(feature = "fused", issue = "35602"))]
 impl<K, V> FusedIterator for IntoIter<K, V> {}
 
@@ -1727,6 +1736,7 @@ impl<'a, K, V> ExactSizeIterator for Keys<'a, K, V> {
         self.inner.len()
     }
 }
+#[cfg(unstable)]
 #[cfg_attr(stability, unstable(feature = "fused", issue = "35602"))]
 impl<'a, K, V> FusedIterator for Keys<'a, K, V> {}
 
@@ -1750,6 +1760,7 @@ impl<'a, K, V> ExactSizeIterator for Values<'a, K, V> {
         self.inner.len()
     }
 }
+#[cfg(unstable)]
 #[cfg_attr(stability, unstable(feature = "fused", issue = "35602"))]
 impl<'a, K, V> FusedIterator for Values<'a, K, V> {}
 
@@ -1773,6 +1784,7 @@ impl<'a, K, V> ExactSizeIterator for ValuesMut<'a, K, V> {
         self.inner.len()
     }
 }
+#[cfg(unstable)]
 #[cfg_attr(stability, unstable(feature = "fused", issue = "35602"))]
 impl<'a, K, V> FusedIterator for ValuesMut<'a, K, V> {}
 
@@ -1808,6 +1820,7 @@ impl<'a, K, V> ExactSizeIterator for Drain<'a, K, V> {
         self.inner.len()
     }
 }
+#[cfg(unstable)]
 #[cfg_attr(stability, unstable(feature = "fused", issue = "35602"))]
 impl<'a, K, V> FusedIterator for Drain<'a, K, V> {}
 
@@ -1827,6 +1840,7 @@ impl<'a, K, V> fmt::Debug for Drain<'a, K, V>
 ///
 /// See [`HashMap::entry`](struct.HashMap.html#method.entry) for details.
 #[must_use = "places do nothing unless written to with `<-` syntax"]
+#[cfg(unstable)]
 #[cfg_attr(stability, unstable(feature = "collection_placement",
             reason = "struct name and placement protocol is subject to change",
             issue = "30172"))]
@@ -1834,6 +1848,7 @@ pub struct EntryPlace<'a, K: 'a, V: 'a> {
     bucket: FullBucketMut<'a, K, V>,
 }
 
+#[cfg(unstable)]
 #[cfg_attr(stability, unstable(feature = "collection_placement",
             reason = "struct name and placement protocol is subject to change",
             issue = "30172"))]
@@ -1846,6 +1861,7 @@ impl<'a, K: 'a + Debug, V: 'a + Debug> Debug for EntryPlace<'a, K, V> {
     }
 }
 
+#[cfg(unstable)]
 #[cfg_attr(stability, unstable(feature = "collection_placement",
             reason = "struct name and placement protocol is subject to change",
             issue = "30172"))]
@@ -1857,6 +1873,7 @@ impl<'a, K, V> Drop for EntryPlace<'a, K, V> {
     }
 }
 
+#[cfg(unstable)]
 #[cfg_attr(stability, unstable(feature = "collection_placement",
             reason = "placement protocol is subject to change",
             issue = "30172"))]
@@ -1877,6 +1894,7 @@ impl<'a, K, V> Placer<V> for Entry<'a, K, V> {
     }
 }
 
+#[cfg(unstable)]
 #[cfg_attr(stability, unstable(feature = "collection_placement",
             reason = "placement protocol is subject to change",
             issue = "30172"))]
@@ -1886,6 +1904,7 @@ impl<'a, K, V> Place<V> for EntryPlace<'a, K, V> {
     }
 }
 
+#[cfg(unstable)]
 #[cfg_attr(stability, unstable(feature = "collection_placement",
             reason = "placement protocol is subject to change",
             issue = "30172"))]
@@ -1982,6 +2001,7 @@ impl<'a, K, V> OccupiedEntry<'a, K, V> {
     }
 
     /// Deprecated, renamed to `remove_entry`
+    #[cfg(unstable)]
     #[cfg_attr(stability, unstable(feature = "map_entry_recover_keys", issue = "34285"))]
     #[cfg_attr(stability, rustc_deprecated(since = "1.12.0", reason = "renamed to `remove_entry`"))]
     pub fn remove_pair(self) -> (K, V) {
@@ -2206,6 +2226,7 @@ impl<'a, K: 'a, V: 'a> VacantEntry<'a, K, V> {
 
     // Only used for InPlacement insert. Avoid unnecessary value copy.
     // The value remains uninitialized.
+    #[cfg(unstable)]
     unsafe fn insert_key(self) -> FullBucketMut<'a, K, V> {
         match self.elem {
             NeqElem(mut bucket, disp) => {
@@ -2492,6 +2513,7 @@ mod test_map {
     use super::RandomState;
     use std::cell::RefCell;
     use rand::{thread_rng, Rng};
+    #[cfg(unstable)]
     use std::panic;
 
     #[test]
@@ -3337,6 +3359,7 @@ mod test_map {
     }
 
     #[test]
+    #[cfg(unstable)]
     fn test_retain() {
         let mut map: HashMap<isize, isize> = (0..100).map(|x|(x, x*10)).collect();
 
@@ -3368,6 +3391,7 @@ mod test_map {
     }
 
     #[test]
+    #[cfg(unstable)]
     fn test_placement_in() {
         let mut map = HashMap::new();
         map.extend((0..10).map(|i| (i, i)));
@@ -3382,6 +3406,7 @@ mod test_map {
     }
 
     #[test]
+    #[cfg(unstable)]
     fn test_placement_panic() {
         let mut map = HashMap::new();
         map.extend((0..10).map(|i| (i, i)));
@@ -3401,6 +3426,7 @@ mod test_map {
     }
 
     #[test]
+    #[cfg(unstable)]
     fn test_placement_drop() {
         // correctly drop
         struct TestV<'a>(&'a mut bool);

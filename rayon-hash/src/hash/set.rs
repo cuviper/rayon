@@ -11,7 +11,9 @@
 use std::borrow::Borrow;
 use std::fmt;
 use std::hash::{Hash, BuildHasher};
-use std::iter::{Chain, FromIterator, FusedIterator};
+use std::iter::{Chain, FromIterator};
+#[cfg(unstable)]
+use std::iter::FusedIterator;
 use std::ops::{BitOr, BitAnd, BitXor, Sub};
 
 use super::Recover;
@@ -650,6 +652,7 @@ impl<T, S> HashSet<T, S>
     /// set.retain(|&k| k % 2 == 0);
     /// assert_eq!(set.len(), 3);
     /// ```
+    #[cfg(unstable)]
     #[cfg_attr(stability, unstable(feature = "retain_hash_collection", issue = "36648"))]
     pub fn retain<F>(&mut self, mut f: F)
         where F: FnMut(&T) -> bool
@@ -977,6 +980,7 @@ impl<'a, K> ExactSizeIterator for Iter<'a, K> {
         self.iter.len()
     }
 }
+#[cfg(unstable)]
 #[cfg_attr(stability, unstable(feature = "fused", issue = "35602"))]
 impl<'a, K> FusedIterator for Iter<'a, K> {}
 
@@ -1006,6 +1010,7 @@ impl<K> ExactSizeIterator for IntoIter<K> {
         self.iter.len()
     }
 }
+#[cfg(unstable)]
 #[cfg_attr(stability, unstable(feature = "fused", issue = "35602"))]
 impl<K> FusedIterator for IntoIter<K> {}
 
@@ -1036,6 +1041,7 @@ impl<'a, K> ExactSizeIterator for Drain<'a, K> {
         self.iter.len()
     }
 }
+#[cfg(unstable)]
 #[cfg_attr(stability, unstable(feature = "fused", issue = "35602"))]
 impl<'a, K> FusedIterator for Drain<'a, K> {}
 
@@ -1094,6 +1100,7 @@ impl<'a, T, S> fmt::Debug for Intersection<'a, T, S>
     }
 }
 
+#[cfg(unstable)]
 #[cfg_attr(stability, unstable(feature = "fused", issue = "35602"))]
 impl<'a, T, S> FusedIterator for Intersection<'a, T, S>
     where T: Eq + Hash,
@@ -1134,6 +1141,7 @@ impl<'a, T, S> Iterator for Difference<'a, T, S>
     }
 }
 
+#[cfg(unstable)]
 #[cfg_attr(stability, unstable(feature = "fused", issue = "35602"))]
 impl<'a, T, S> FusedIterator for Difference<'a, T, S>
     where T: Eq + Hash,
@@ -1175,6 +1183,7 @@ impl<'a, T, S> Iterator for SymmetricDifference<'a, T, S>
     }
 }
 
+#[cfg(unstable)]
 #[cfg_attr(stability, unstable(feature = "fused", issue = "35602"))]
 impl<'a, T, S> FusedIterator for SymmetricDifference<'a, T, S>
     where T: Eq + Hash,
@@ -1201,6 +1210,7 @@ impl<'a, T, S> Clone for Union<'a, T, S> {
     }
 }
 
+#[cfg(unstable)]
 #[cfg_attr(stability, unstable(feature = "fused", issue = "35602"))]
 impl<'a, T, S> FusedIterator for Union<'a, T, S>
     where T: Eq + Hash,
@@ -1639,6 +1649,7 @@ mod test_set {
     }
 
     #[test]
+    #[cfg(unstable)]
     fn test_retain() {
         let xs = [1,2,3,4,5,6];
         let mut set: HashSet<isize> = xs.iter().cloned().collect();
