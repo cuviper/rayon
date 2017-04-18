@@ -82,7 +82,7 @@ impl<'a, K: Sync, V: Sync> ParallelIterator for ParIter<'a, K, V> {
     }
 }
 
-pub struct ParIterProducer<'a, K: 'a, V: 'a> {
+struct ParIterProducer<'a, K: 'a, V: 'a> {
     iter: SplitBuckets<'a, K, V>,
 }
 
@@ -139,7 +139,7 @@ impl<'a, K: Sync, V: Send> ParallelIterator for ParIterMut<'a, K, V> {
     }
 }
 
-pub struct ParIterMutProducer<'a, K: 'a, V: 'a> {
+struct ParIterMutProducer<'a, K: 'a, V: 'a> {
     iter: SplitBuckets<'a, K, V>,
     // To ensure invariance with respect to V
     marker: marker::PhantomData<&'a mut V>,
@@ -200,7 +200,7 @@ impl<K: Send, V: Send> ParallelIterator for ParIntoIter<K, V> {
     }
 }
 
-pub struct ParIntoIterProducer<'a, K: 'a, V: 'a> {
+struct ParIntoIterProducer<'a, K: 'a, V: 'a> {
     iter: SplitBuckets<'a, K, V>,
 }
 
