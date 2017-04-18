@@ -1,4 +1,4 @@
-use {Configuration, PanicHandler};
+use ::{Configuration, ExitHandler, PanicHandler, StartHandler};
 use deque;
 use deque::{Worker, Stealer, Stolen};
 use job::{JobRef, StackJob};
@@ -40,7 +40,9 @@ pub struct Registry {
     state: Mutex<RegistryState>,
     sleep: Sleep,
     job_uninjector: Stealer<JobRef>,
-    panic_handler: Option<PanicHandler>,
+    panic_handler: Option<Box<PanicHandler>>,
+    start_handler: Option<Box<StartHandler>>,
+    exit_handler: Option<Box<ExitHandler>>,
 
     // When this latch reaches 0, it means that all work on this
     // registry must be complete. This is ensured in the following ways:
@@ -72,17 +74,21 @@ static THE_REGISTRY_SET: Once = ONCE_INIT;
 /// initialization has not already occurred, use the default
 /// configuration.
 fn global_registry() -> &'static Arc<Registry> {
-    THE_REGISTRY_SET.call_once(|| unsafe { init_registry(Configuration::new()) });
-    unsafe { THE_REGISTRY.unwrap() }
+    THE_REGISTRY_SET.call_once(|| unsafe { init_registry(Configuration::new()).unwrap() });
+    unsafe { THE_REGISTRY.expect("The global thread pool has not been initialized.") }
 }
 
 /// Starts the worker threads (if that has not already happened) with
 /// the given configuration.
 pub fn init_global_registry(config: Configuration) -> Result<&'static Registry, Box<Error>> {
     let mut called = false;
-    THE_REGISTRY_SET.call_once(|| unsafe { init_registry(config); called = true; });
+    let mut init_result = Ok(());;
+    THE_REGISTRY_SET.call_once(|| unsafe {
+        init_result = init_registry(config);
+        called = true;
+    });
     if called {
-        Ok(unsafe { THE_REGISTRY.unwrap() })
+        init_result.map(|()| &**global_registry())
     } else {
         Err(Box::new(GlobalPoolAlreadyInitialized))
     }
@@ -92,14 +98,21 @@ pub fn init_global_registry(config: Configuration) -> Result<&'static Registry, 
 /// Meant to be called from within the `THE_REGISTRY_SET` once
 /// function. Declared `unsafe` because it writes to `THE_REGISTRY` in
 /// an unsynchronized fashion.
-unsafe fn init_registry(config: Configuration) {
-    let registry = leak(Arc::new(Registry::new(config)));
-    THE_REGISTRY = Some(registry);
+unsafe fn init_registry(config: Configuration) -> Result<(), Box<Error>> {
+    Registry::new(config).map(|registry| THE_REGISTRY = Some(leak(registry)))
+}
+
+struct Terminator<'a>(&'a Arc<Registry>);
+
+impl<'a> Drop for Terminator<'a> {
+    fn drop(&mut self) {
+        self.0.terminate()
+    }
 }
 
 impl Registry {
-    pub fn new(mut configuration: Configuration) -> Arc<Registry> {
-        let n_threads = configuration.num_threads();
+    pub fn new(mut configuration: Configuration) -> Result<Arc<Registry>, Box<Error>> {
+        let n_threads = configuration.get_num_threads();
 
         let (inj_worker, inj_stealer) = deque::new();
         let (workers, stealers): (Vec<_>, Vec<_>) = (0..n_threads).map(|_| deque::new()).unzip();
@@ -112,23 +125,30 @@ impl Registry {
             sleep: Sleep::new(),
             job_uninjector: inj_stealer,
             terminate_latch: CountLatch::new(),
-            panic_handler: configuration.panic_handler(),
+            panic_handler: configuration.take_panic_handler(),
+            start_handler: configuration.take_start_handler(),
+            exit_handler: configuration.take_exit_handler(),
         });
+
+        // If we return early or panic, make sure to terminate existing threads.
+        let t1000 = Terminator(&registry);
 
         for (index, worker) in workers.into_iter().enumerate() {
             let registry = registry.clone();
             let mut b = thread::Builder::new();
-            if let Some(name) = configuration.thread_name(index) {
+            if let Some(name) = configuration.get_thread_name(index) {
                 b = b.name(name);
             }
-            if let Some(stack_size) = configuration.stack_size() {
+            if let Some(stack_size) = configuration.get_stack_size() {
                 b = b.stack_size(stack_size);
             }
-            // FIXME(#205) recover from this error
-            b.spawn(move || unsafe { main_loop(worker, registry, index) }).unwrap();
+            try!(b.spawn(move || unsafe { main_loop(worker, registry, index) }));
         }
 
-        registry
+        // Returning normally now, without termination.
+        mem::forget(t1000);
+
+        Ok(registry.clone())
     }
 
     pub fn current() -> Arc<Registry> {
@@ -510,6 +530,18 @@ unsafe fn main_loop(worker: Worker<JobRef>, registry: Arc<Registry>, index: usiz
     // **user code** panics, we should catch that and redirect.
     let abort_guard = unwind::AbortIfPanic;
 
+    // Inform a user callback that we started a thread.
+    if let Some(ref handler) = registry.start_handler {
+        let registry = registry.clone();
+        match unwind::halt_unwinding(|| handler(index)) {
+            Ok(()) => {
+            }
+            Err(err) => {
+                registry.handle_panic(err);
+            }
+        }
+    }
+
     worker_thread.wait_until(&registry.terminate_latch);
 
     // Should not be any work left in our queue.
@@ -520,6 +552,19 @@ unsafe fn main_loop(worker: Worker<JobRef>, registry: Arc<Registry>, index: usiz
 
     // Normal termination, do not abort.
     mem::forget(abort_guard);
+
+    // Inform a user callback that we exited a thread.
+    if let Some(ref handler) = registry.exit_handler {
+        let registry = registry.clone();
+        match unwind::halt_unwinding(|| handler(index)) {
+            Ok(()) => {
+            }
+            Err(err) => {
+                registry.handle_panic(err);
+            }
+        }
+        // We're already exiting the thread, there's nothing else to do.
+    }
 }
 
 /// If already in a worker-thread, just execute `op`.  Otherwise,

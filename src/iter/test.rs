@@ -11,8 +11,6 @@ use std::collections::{BinaryHeap, VecDeque};
 use std::f64;
 use std::usize;
 
-fn is_bounded<T: ExactParallelIterator>(_: T) {}
-fn is_exact<T: ExactParallelIterator>(_: T) {}
 fn is_indexed<T: IndexedParallelIterator>(_: T) {}
 
 #[test]
@@ -118,10 +116,8 @@ pub fn execute_strings_split() {
 }
 
 #[test]
-pub fn check_map_exact_and_bounded() {
+pub fn check_map_indexed() {
     let a = [1, 2, 3];
-    is_bounded(a.par_iter().map(|x| x));
-    is_exact(a.par_iter().map(|x| x));
     is_indexed(a.par_iter().map(|x| x));
 }
 
@@ -179,15 +175,6 @@ pub fn fold_map_reduce() {
                          vec![15], vec![16], vec![17], vec![18], vec![19], vec![20], vec![21],
                          vec![22], vec![23], vec![24], vec![25], vec![26], vec![27], vec![28],
                          vec![29], vec![30], vec![31]]));
-}
-
-#[test]
-#[allow(deprecated)]
-pub fn check_weight_exact_and_bounded() {
-    let a = [1, 2, 3];
-    is_bounded(a.par_iter().weight(2.0));
-    is_exact(a.par_iter().weight(2.0));
-    is_indexed(a.par_iter().weight(2.0));
 }
 
 #[test]
@@ -346,33 +333,25 @@ pub fn check_drops() {
 }
 
 #[test]
-pub fn check_slice_exact_and_bounded() {
+pub fn check_slice_indexed() {
     let a = vec![1, 2, 3];
-    is_bounded(a.par_iter());
-    is_exact(a.par_iter());
     is_indexed(a.par_iter());
 }
 
 #[test]
-pub fn check_slice_mut_exact_and_bounded() {
+pub fn check_slice_mut_indexed() {
     let mut a = vec![1, 2, 3];
-    is_bounded(a.par_iter_mut());
-    is_exact(a.par_iter_mut());
     is_indexed(a.par_iter_mut());
 }
 
 #[test]
-pub fn check_vec_exact_and_bounded() {
+pub fn check_vec_indexed() {
     let a = vec![1, 2, 3];
-    is_bounded(a.clone().into_par_iter());
-    is_exact(a.clone().into_par_iter());
     is_indexed(a.clone().into_par_iter());
 }
 
 #[test]
-pub fn check_range_exact_and_bounded() {
-    is_bounded((1..5).into_par_iter());
-    is_exact((1..5).into_par_iter());
+pub fn check_range_indexed() {
     is_indexed((1..5).into_par_iter());
 }
 
@@ -1043,6 +1022,10 @@ pub fn check_chain() {
         .collect();
     let other: Vec<i32> = (0..100).filter(|x| x & 1 == 1).collect();
     assert_eq!(res, other);
+
+    // chain collect is ok with the "fake" specialization
+    let res: Vec<i32> = Some(1i32).into_par_iter().chain(None).collect();
+    assert_eq!(res, &[1]);
 }
 
 
@@ -1224,6 +1207,25 @@ fn min_max() {
 
 #[test]
 fn min_max_by() {
+    let mut rng = XorShiftRng::from_seed([14159, 26535, 89793, 23846]);
+    // Make sure there are duplicate keys, for testing sort stability
+    let r: Vec<i32> = rng.gen_iter().take(512).collect();
+    let a: Vec<(i32, u16)> = r.iter()
+        .chain(&r)
+        .cloned()
+        .zip(0..)
+        .collect();
+    for i in 0..a.len() + 1 {
+        let slice = &a[..i];
+        assert_eq!(slice.par_iter().min_by(|x, y| x.0.cmp(&y.0)),
+                   slice.iter().min_by(|x, y| x.0.cmp(&y.0)));
+        assert_eq!(slice.par_iter().max_by(|x, y| x.0.cmp(&y.0)),
+                   slice.iter().max_by(|x, y| x.0.cmp(&y.0)));
+    }
+}
+
+#[test]
+fn min_max_by_key() {
     let mut rng = XorShiftRng::from_seed([14159, 26535, 89793, 23846]);
     // Make sure there are duplicate keys, for testing sort stability
     let r: Vec<i32> = rng.gen_iter().take(512).collect();

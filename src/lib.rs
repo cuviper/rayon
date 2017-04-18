@@ -6,21 +6,23 @@
 // disable warnings in that scenario.
 #![cfg_attr(not(feature = "unstable"), allow(warnings))]
 
-extern crate deque;
-#[cfg(feature = "unstable")]
-extern crate futures;
-extern crate libc;
-extern crate num_cpus;
-extern crate rand;
 extern crate rayon_core;
+
+#[cfg(test)]
+extern crate rand;
+
+#[macro_use]
+mod delegate;
 
 #[macro_use]
 mod private;
 
+pub mod collections;
 pub mod iter;
 pub mod option;
 pub mod prelude;
 pub mod range;
+pub mod result;
 pub mod slice;
 pub mod str;
 pub mod vec;
@@ -31,8 +33,6 @@ pub use iter::split;
 
 pub use rayon_core::current_num_threads;
 pub use rayon_core::Configuration;
-pub use rayon_core::PanicHandler;
-pub use rayon_core::dump_stats;
 pub use rayon_core::initialize;
 pub use rayon_core::ThreadPool;
 pub use rayon_core::join;

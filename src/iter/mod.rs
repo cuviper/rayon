@@ -49,16 +49,13 @@ mod reduce;
 mod skip;
 pub use self::skip::Skip;
 mod splitter;
-pub use self::splitter::{split, ParallelSplit};
+pub use self::splitter::{split, Split};
 mod take;
 pub use self::take::Take;
 mod map;
-pub use self::map::{Map, MapOp, MapFn, MapCloned, MapInspect};
-mod weight;
-pub use self::weight::Weight;
+pub use self::map::Map;
 mod zip;
 pub use self::zip::Zip;
-mod collections;
 mod noop;
 mod rev;
 pub use self::rev::Rev;
@@ -66,6 +63,10 @@ mod len;
 pub use self::len::{MinLen, MaxLen};
 mod sum;
 mod product;
+mod cloned;
+pub use self::cloned::Cloned;
+mod inspect;
+pub use self::inspect::Inspect;
 
 #[cfg(test)]
 mod test;
@@ -117,20 +118,6 @@ impl<'data, I: 'data + ?Sized> IntoParallelRefMutIterator<'data> for I
 pub trait ParallelIterator: Sized {
     type Item: Send;
 
-    /// Deprecated. If the adaptive algorithms don't split appropriately, try
-    /// `IndexedParallelIterator::with_min_len()` or `with_max_len()` instead.
-    #[deprecated(since = "v0.7.0", note = "try `with_min_len` or `with_max_len` instead")]
-    fn weight(self, _scale: f64) -> Weight<Self> {
-        weight::new(self)
-    }
-
-    /// Deprecated. If the adaptive algorithms don't split appropriately, try
-    /// `IndexedParallelIterator::with_min_len()` or `with_max_len()` instead.
-    #[deprecated(since = "v0.7.0", note = "try `with_min_len` or `with_max_len` instead")]
-    fn weight_max(self) -> Weight<Self> {
-        weight::new(self)
-    }
-
     /// Executes `OP` on each item produced by the iterator, in parallel.
     fn for_each<OP>(self, op: OP)
         where OP: Fn(Self::Item) + Sync
@@ -145,29 +132,29 @@ pub trait ParallelIterator: Sized {
 
     /// Applies `map_op` to each item of this iterator, producing a new
     /// iterator with the results.
-    fn map<F, R>(self, map_op: F) -> Map<Self, MapFn<F>>
+    fn map<F, R>(self, map_op: F) -> Map<Self, F>
         where F: Fn(Self::Item) -> R + Sync,
               R: Send
     {
-        map::new(self, MapFn(map_op))
+        map::new(self, map_op)
     }
 
     /// Creates an iterator which clones all of its elements.  This may be
     /// useful when you have an iterator over `&T`, but you need `T`.
-    fn cloned<'a, T>(self) -> Map<Self, MapCloned>
+    fn cloned<'a, T>(self) -> Cloned<Self>
         where T: 'a + Clone + Send,
               Self: ParallelIterator<Item = &'a T>
     {
-        map::new(self, MapCloned)
+        cloned::new(self)
     }
 
     /// Applies `inspect_op` to a reference to each item of this iterator,
     /// producing a new iterator passing through the original items.  This is
     /// often useful for debugging to see what's happening in iterator stages.
-    fn inspect<OP>(self, inspect_op: OP) -> Map<Self, MapInspect<OP>>
+    fn inspect<OP>(self, inspect_op: OP) -> Inspect<Self, OP>
         where OP: Fn(&Self::Item) + Sync
     {
-        map::new(self, MapInspect(inspect_op))
+        inspect::new(self, inspect_op)
     }
 
     /// Applies `filter_op` to each item of this iterator, producing a new
@@ -230,7 +217,7 @@ pub trait ParallelIterator: Sized {
         where OP: Fn(Self::Item, Self::Item) -> Self::Item + Sync,
               ID: Fn() -> Self::Item + Sync
     {
-        reduce::reduce(self, &reduce::ReduceWithIdentityOp::new(&identity, &op))
+        reduce::reduce(self, identity, op)
     }
 
     /// Reduces the items in the iterator into one item using `op`.
@@ -250,20 +237,15 @@ pub trait ParallelIterator: Sized {
     fn reduce_with<OP>(self, op: OP) -> Option<Self::Item>
         where OP: Fn(Self::Item, Self::Item) -> Self::Item + Sync
     {
-        self.map(Some).reduce(|| None, |opt_a, opt_b| match (opt_a, opt_b) {
-            (Some(a), Some(b)) => Some(op(a, b)),
-            (Some(v), None) | (None, Some(v)) => Some(v),
-            (None, None) => None,
-        })
-    }
-
-    /// Deprecated. Use `reduce()` instead.
-    #[deprecated(since = "v0.5.0", note = "call `reduce` instead")]
-    fn reduce_with_identity<OP>(self, identity: Self::Item, op: OP) -> Self::Item
-        where OP: Fn(Self::Item, Self::Item) -> Self::Item + Sync,
-              Self::Item: Clone + Sync
-    {
-        self.reduce(|| identity.clone(), op)
+        self.fold(|| None, |opt_a, b| match opt_a {
+                Some(a) => Some(op(a, b)),
+                None => Some(b),
+            })
+            .reduce(|| None, |opt_a, opt_b| match (opt_a, opt_b) {
+                (Some(a), Some(b)) => Some(op(a, b)),
+                (Some(v), None) | (None, Some(v)) => Some(v),
+                (None, None) => None,
+            })
     }
 
     /// Parallel fold is similar to sequential fold except that the
@@ -437,15 +419,6 @@ pub trait ParallelIterator: Sized {
         product::product(self)
     }
 
-    /// DEPRECATED
-    #[deprecated(since = "v0.6.0",
-        note = "name changed to `product()` to match sequential iterators")]
-    fn mul(self) -> Self::Item
-        where Self::Item: Product
-    {
-        product::product(self)
-    }
-
     /// Computes the minimum of all the items in the iterator. If the
     /// iterator is empty, `None` is returned; otherwise, `Some(min)`
     /// is returned.
@@ -461,6 +434,22 @@ pub trait ParallelIterator: Sized {
         self.reduce_with(cmp::min)
     }
 
+    /// Computes the minimum of all the items in the iterator with respect to
+    /// the given comparison function. If the iterator is empty, `None` is
+    /// returned; otherwise, `Some(min)` is returned.
+    ///
+    /// Note that the order in which the items will be reduced is not
+    /// specified, so if the comparison function is not associative, then
+    /// the results are not deterministic.
+    fn min_by<F>(self, f: F) -> Option<Self::Item>
+        where F: Sync + Fn(&Self::Item, &Self::Item) -> Ordering
+    {
+        self.reduce_with(|a, b| match f(&a, &b) {
+                             Ordering::Greater => b,
+                             _ => a,
+                         })
+    }
+
     /// Computes the item that yields the minimum value for the given
     /// function. If the iterator is empty, `None` is returned;
     /// otherwise, `Some(item)` is returned.
@@ -473,10 +462,7 @@ pub trait ParallelIterator: Sized {
               F: Sync + Fn(&Self::Item) -> K
     {
         self.map(|x| (f(&x), x))
-            .reduce_with(|a, b| match (a.0).cmp(&b.0) {
-                             Ordering::Greater => b,
-                             _ => a,
-                         })
+            .min_by(|a, b| (a.0).cmp(&b.0))
             .map(|(_, x)| x)
     }
 
@@ -495,6 +481,22 @@ pub trait ParallelIterator: Sized {
         self.reduce_with(cmp::max)
     }
 
+    /// Computes the maximum of all the items in the iterator with respect to
+    /// the given comparison function. If the iterator is empty, `None` is
+    /// returned; otherwise, `Some(min)` is returned.
+    ///
+    /// Note that the order in which the items will be reduced is not
+    /// specified, so if the comparison function is not associative, then
+    /// the results are not deterministic.
+    fn max_by<F>(self, f: F) -> Option<Self::Item>
+        where F: Sync + Fn(&Self::Item, &Self::Item) -> Ordering
+    {
+        self.reduce_with(|a, b| match f(&a, &b) {
+                             Ordering::Greater => a,
+                             _ => b,
+                         })
+    }
+
     /// Computes the item that yields the maximum value for the given
     /// function. If the iterator is empty, `None` is returned;
     /// otherwise, `Some(item)` is returned.
@@ -507,10 +509,7 @@ pub trait ParallelIterator: Sized {
               F: Sync + Fn(&Self::Item) -> K
     {
         self.map(|x| (f(&x), x))
-            .reduce_with(|a, b| match (a.0).cmp(&b.0) {
-                             Ordering::Greater => a,
-                             _ => b,
-                         })
+            .max_by(|a, b| (a.0).cmp(&b.0))
             .map(|(_, x)| x)
     }
 
@@ -653,38 +652,10 @@ impl<T: ParallelIterator> IntoParallelIterator for T {
     }
 }
 
-/// A trait for parallel iterators items where the precise number of
-/// items is not known, but we can at least give an upper-bound. These
-/// sorts of iterators result from filtering.
-pub trait BoundedParallelIterator: ParallelIterator {
-    fn upper_bound(&mut self) -> usize;
-
-    /// Internal method used to define the behavior of this parallel
-    /// iterator. You should not need to call this directly.
-    ///
-    /// This method causes the iterator `self` to start producing
-    /// items and to feed them to the consumer `consumer` one by one.
-    /// It may split the consumer before doing so to create the
-    /// opportunity to produce in parallel. If a split does happen, it
-    /// will inform the consumer of the index where the split should
-    /// occur (unlike `ParallelIterator::drive_unindexed()`).
-    ///
-    /// See the [README] for more details on the internals of parallel
-    /// iterators.
-    ///
-    /// [README]: README.md
-    fn drive<'c, C: Consumer<Self::Item>>(self, consumer: C) -> C::Result;
-}
-
-/// A trait for parallel iterators items where the precise number of
-/// items is known. This occurs when e.g. iterating over a
-/// vector. Knowing precisely how many items will be produced is very
-/// useful.
-pub trait ExactParallelIterator: BoundedParallelIterator {
-    /// Produces an exact count of how many items this iterator will
-    /// produce, presuming no panic occurs.
-    fn len(&mut self) -> usize;
-
+/// An iterator that supports "random access" to its data, meaning
+/// that you can split it at arbitrary indices and draw data from
+/// those points.
+pub trait IndexedParallelIterator: ParallelIterator {
     /// Collects the results of the iterator into the specified
     /// vector. The vector is always truncated before execution
     /// begins. If possible, reusing the vector across calls can lead
@@ -692,12 +663,7 @@ pub trait ExactParallelIterator: BoundedParallelIterator {
     fn collect_into(self, target: &mut Vec<Self::Item>) {
         collect::collect_into(self, target);
     }
-}
 
-/// An iterator that supports "random access" to its data, meaning
-/// that you can split it at arbitrary indices and draw data from
-/// those points.
-pub trait IndexedParallelIterator: ExactParallelIterator {
     /// Iterate over tuples `(A, B)`, where the items `A` are from
     /// this iterator and `B` are from the iterator given as argument.
     /// Like the `zip` method on ordinary iterators, if the two
@@ -900,6 +866,26 @@ pub trait IndexedParallelIterator: ExactParallelIterator {
     fn with_max_len(self, max: usize) -> MaxLen<Self> {
         len::new_max_len(self, max)
     }
+
+    /// Produces an exact count of how many items this iterator will
+    /// produce, presuming no panic occurs.
+    fn len(&mut self) -> usize;
+
+    /// Internal method used to define the behavior of this parallel
+    /// iterator. You should not need to call this directly.
+    ///
+    /// This method causes the iterator `self` to start producing
+    /// items and to feed them to the consumer `consumer` one by one.
+    /// It may split the consumer before doing so to create the
+    /// opportunity to produce in parallel. If a split does happen, it
+    /// will inform the consumer of the index where the split should
+    /// occur (unlike `ParallelIterator::drive_unindexed()`).
+    ///
+    /// See the [README] for more details on the internals of parallel
+    /// iterators.
+    ///
+    /// [README]: README.md
+    fn drive<'c, C: Consumer<Self::Item>>(self, consumer: C) -> C::Result;
 
     /// Internal method used to define the behavior of this parallel
     /// iterator. You should not need to call this directly.
