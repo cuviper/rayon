@@ -8,24 +8,6 @@ use rayon::iter::internal::*;
 
 use super::{RawTable, RawBucket, EMPTY_BUCKET};
 
-impl<K, V> RawTable<K, V> {
-    pub fn par_drain(&mut self) -> ParDrain<K, V> {
-        // Pre-set the map size to zero, indicating all items drained.
-        // FIXME: If the `ParDrain` or any of its splits are leaked, then there
-        // may remain buckets that aren't `EMPTY_BUCKET`!  When this is used for
-        // `into_iter()`, that doesn't matter -- just more leaked values.  But
-        // if we ever make a `par_drain` available outside the crate, we may
-        // need to fixup the size and/or buckets properly.
-        self.size = 0;
-
-        // Replace the marker regardless of lifetime bounds on parameters.
-        ParDrain {
-            iter: SplitBuckets::new(self),
-            marker: marker::PhantomData,
-        }
-    }
-}
-
 
 struct SplitBuckets<'a, K, V> {
     bucket: RawBucket<K, V>,
@@ -187,21 +169,50 @@ impl<'a, K: Sync, V: Send> UnindexedProducer for ParIterMutProducer<'a, K, V> {
     }
 }
 
-/// Parallel iterator over the entries in a table, clearing the table.
-pub struct ParDrain<'a, K: 'a, V: 'a> {
-    iter: SplitBuckets<'a, K, V>,
-    marker: marker::PhantomData<&'a RawTable<K, V>>,
+/// Parallel iterator over the entries in a table, consuming it.
+pub struct ParIntoIter<K, V> {
+    table: RawTable<K, V>,
 }
 
-unsafe impl<'a, K: Send, V: Send> Send for ParDrain<'a, K, V> {}
+impl<K: Send, V: Send> IntoParallelIterator for RawTable<K, V> {
+    type Item = (K, V);
+    type Iter = ParIntoIter<K, V>;
 
-impl<'a, K: Send, V: Send> UnindexedProducer for ParDrain<'a, K, V> {
+    fn into_par_iter(self) -> Self::Iter {
+        ParIntoIter { table: self }
+    }
+}
+
+impl<K: Send, V: Send> ParallelIterator for ParIntoIter<K, V> {
+    type Item = (K, V);
+
+    fn drive_unindexed<C>(self, consumer: C) -> C::Result
+        where C: UnindexedConsumer<Self::Item>
+    {
+        // Pre-set the map size to zero, indicating all items drained.
+        let mut table = self.table;
+        table.size = 0;
+
+        let producer = ParIntoIterProducer {
+            iter: SplitBuckets::new(&table),
+        };
+        bridge_unindexed(producer, consumer)
+    }
+}
+
+pub struct ParIntoIterProducer<'a, K: 'a, V: 'a> {
+    iter: SplitBuckets<'a, K, V>,
+}
+
+unsafe impl<'a, K: Send, V: Send> Send for ParIntoIterProducer<'a, K, V> {}
+
+impl<'a, K: Send, V: Send> UnindexedProducer for ParIntoIterProducer<'a, K, V> {
     type Item = (K, V);
 
     fn split(mut self) -> (Self, Option<Self>) {
         let (left, right) = self.iter.split();
         self.iter = left;
-        let right = right.map(|iter| ParDrain { iter: iter, ..self });
+        let right = right.map(|iter| ParIntoIterProducer { iter: iter });
         (self, right)
     }
 
@@ -218,7 +229,7 @@ impl<'a, K: Send, V: Send> UnindexedProducer for ParDrain<'a, K, V> {
     }
 }
 
-impl<'a, K: 'a, V: 'a> Drop for ParDrain<'a, K, V> {
+impl<'a, K: 'a, V: 'a> Drop for ParIntoIterProducer<'a, K, V> {
     fn drop(&mut self) {
         for bucket in self.iter.by_ref() {
             unsafe {
