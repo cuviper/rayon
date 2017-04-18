@@ -9,13 +9,6 @@ use rayon::iter::internal::*;
 use super::{RawTable, RawBucket, EMPTY_BUCKET};
 
 impl<K, V> RawTable<K, V> {
-    pub fn par_iter_mut(&mut self) -> ParIterMut<K, V> {
-        ParIterMut {
-            iter: SplitBuckets::new(self),
-            marker: marker::PhantomData,
-        }
-    }
-
     pub fn par_drain(&mut self) -> ParDrain<K, V> {
         // Pre-set the map size to zero, indicating all items drained.
         // FIXME: If the `ParDrain` or any of its splits are leaked, then there
@@ -92,7 +85,7 @@ impl<'a, K: Sync, V: Sync> IntoParallelIterator for &'a RawTable<K, V> {
     type Iter = ParIter<'a, K, V>;
 
     fn into_par_iter(self) -> Self::Iter {
-        ParIter { table: &self }
+        ParIter { table: self }
     }
 }
 
@@ -138,20 +131,47 @@ impl<'a, K: Sync, V: Sync> UnindexedProducer for ParIterProducer<'a, K, V> {
 
 /// Parallel iterator over mutable references to entries in a table.
 pub struct ParIterMut<'a, K: 'a, V: 'a> {
+    table: &'a mut RawTable<K, V>,
+}
+
+impl<'a, K: Sync, V: Send> IntoParallelIterator for &'a mut RawTable<K, V> {
+    type Item = (&'a K, &'a mut V);
+    type Iter = ParIterMut<'a, K, V>;
+
+    fn into_par_iter(self) -> Self::Iter {
+        ParIterMut { table: self }
+    }
+}
+
+impl<'a, K: Sync, V: Send> ParallelIterator for ParIterMut<'a, K, V> {
+    type Item = (&'a K, &'a mut V);
+
+    fn drive_unindexed<C>(self, consumer: C) -> C::Result
+        where C: UnindexedConsumer<Self::Item>
+    {
+        let producer = ParIterMutProducer {
+            iter: SplitBuckets::new(self.table),
+            marker: marker::PhantomData,
+        };
+        bridge_unindexed(producer, consumer)
+    }
+}
+
+pub struct ParIterMutProducer<'a, K: 'a, V: 'a> {
     iter: SplitBuckets<'a, K, V>,
     // To ensure invariance with respect to V
     marker: marker::PhantomData<&'a mut V>,
 }
 
-unsafe impl<'a, K: Sync, V: Send> Send for ParIterMut<'a, K, V> {}
+unsafe impl<'a, K: Sync, V: Send> Send for ParIterMutProducer<'a, K, V> {}
 
-impl<'a, K: Sync, V: Send> UnindexedProducer for ParIterMut<'a, K, V> {
+impl<'a, K: Sync, V: Send> UnindexedProducer for ParIterMutProducer<'a, K, V> {
     type Item = (&'a K, &'a mut V);
 
     fn split(mut self) -> (Self, Option<Self>) {
         let (left, right) = self.iter.split();
         self.iter = left;
-        let right = right.map(|iter| ParIterMut { iter: iter, ..self });
+        let right = right.map(|iter| ParIterMutProducer { iter: iter, ..self });
         (self, right)
     }
 

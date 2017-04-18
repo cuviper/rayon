@@ -16,7 +16,7 @@ pub struct ParIter<'a, K: Sync + 'a, V: Sync + 'a> {
 }
 
 pub struct ParIterMut<'a, K: Sync + 'a, V: Send + 'a> {
-    table: &'a mut RawTable<K, V>,
+    inner: table::ParIterMut<'a, K, V>,
 }
 
 pub struct ParKeys<'a, K: Sync + 'a, V: Sync + 'a> {
@@ -83,7 +83,7 @@ impl<'a, K: Sync, V: Send, S> IntoParallelIterator for &'a mut HashMap<K, V, S> 
     type Iter = ParIterMut<'a, K, V>;
 
     fn into_par_iter(self) -> Self::Iter {
-        ParIterMut { table: &mut self.table }
+        ParIterMut { inner: self.table.into_par_iter() }
     }
 }
 
@@ -144,7 +144,7 @@ impl<'a, K: Sync, V: Send> ParallelIterator for ParIterMut<'a, K, V> {
     fn drive_unindexed<C>(self, consumer: C) -> C::Result
         where C: UnindexedConsumer<Self::Item>
     {
-        bridge_unindexed(self.table.par_iter_mut(), consumer)
+        self.inner.drive_unindexed(consumer)
     }
 }
 
