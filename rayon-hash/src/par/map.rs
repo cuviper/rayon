@@ -4,6 +4,7 @@ use rayon::iter::{ParallelIterator, IntoParallelIterator, FromParallelIterator};
 use rayon::iter::internal::{UnindexedConsumer, bridge_unindexed};
 
 use super::{Hash, HashMap, BuildHasher, RawTable};
+use hash::table;
 
 
 pub struct ParIntoIter<K: Send, V: Send> {
@@ -11,7 +12,7 @@ pub struct ParIntoIter<K: Send, V: Send> {
 }
 
 pub struct ParIter<'a, K: Sync + 'a, V: Sync + 'a> {
-    table: &'a RawTable<K, V>,
+    inner: table::ParIter<'a, K, V>,
 }
 
 pub struct ParIterMut<'a, K: Sync + 'a, V: Send + 'a> {
@@ -73,7 +74,7 @@ impl<'a, K: Sync, V: Sync, S> IntoParallelIterator for &'a HashMap<K, V, S> {
     type Iter = ParIter<'a, K, V>;
 
     fn into_par_iter(self) -> Self::Iter {
-        ParIter { table: &self.table }
+        ParIter { inner: self.table.into_par_iter() }
     }
 }
 
@@ -132,7 +133,7 @@ impl<'a, K: Sync, V: Sync> ParallelIterator for ParIter<'a, K, V> {
     fn drive_unindexed<C>(self, consumer: C) -> C::Result
         where C: UnindexedConsumer<Self::Item>
     {
-        bridge_unindexed(self.table.par_iter(), consumer)
+        self.inner.drive_unindexed(consumer)
     }
 }
 

@@ -3,15 +3,12 @@
 use std::marker;
 use std::ptr;
 
-use rayon::iter::internal::{UnindexedProducer, Folder};
+use rayon::prelude::*;
+use rayon::iter::internal::*;
 
 use super::{RawTable, RawBucket, EMPTY_BUCKET};
 
 impl<K, V> RawTable<K, V> {
-    pub fn par_iter(&self) -> ParIter<K, V> {
-        ParIter { iter: SplitBuckets::new(self) }
-    }
-
     pub fn par_iter_mut(&mut self) -> ParIterMut<K, V> {
         ParIterMut {
             iter: SplitBuckets::new(self),
@@ -87,18 +84,42 @@ impl<'a, K, V> Iterator for SplitBuckets<'a, K, V> {
 
 /// Parallel iterator over shared references to entries in a table.
 pub struct ParIter<'a, K: 'a, V: 'a> {
+    table: &'a RawTable<K, V>,
+}
+
+impl<'a, K: Sync, V: Sync> IntoParallelIterator for &'a RawTable<K, V> {
+    type Item = (&'a K, &'a V);
+    type Iter = ParIter<'a, K, V>;
+
+    fn into_par_iter(self) -> Self::Iter {
+        ParIter { table: &self }
+    }
+}
+
+impl<'a, K: Sync, V: Sync> ParallelIterator for ParIter<'a, K, V> {
+    type Item = (&'a K, &'a V);
+
+    fn drive_unindexed<C>(self, consumer: C) -> C::Result
+        where C: UnindexedConsumer<Self::Item>
+    {
+        let producer = ParIterProducer { iter: SplitBuckets::new(self.table) };
+        bridge_unindexed(producer, consumer)
+    }
+}
+
+pub struct ParIterProducer<'a, K: 'a, V: 'a> {
     iter: SplitBuckets<'a, K, V>,
 }
 
-unsafe impl<'a, K: Sync, V: Sync> Send for ParIter<'a, K, V> {}
+unsafe impl<'a, K: Sync, V: Sync> Send for ParIterProducer<'a, K, V> {}
 
-impl<'a, K: Sync, V: Sync> UnindexedProducer for ParIter<'a, K, V> {
+impl<'a, K: Sync, V: Sync> UnindexedProducer for ParIterProducer<'a, K, V> {
     type Item = (&'a K, &'a V);
 
     fn split(mut self) -> (Self, Option<Self>) {
         let (left, right) = self.iter.split();
         self.iter = left;
-        let right = right.map(|iter| ParIter { iter: iter });
+        let right = right.map(|iter| ParIterProducer { iter: iter });
         (self, right)
     }
 
