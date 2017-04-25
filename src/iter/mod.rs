@@ -69,6 +69,7 @@ mod inspect;
 pub use self::inspect::Inspect;
 mod while_some;
 pub use self::while_some::WhileSome;
+mod threadable;
 
 #[cfg(test)]
 mod test;
@@ -122,9 +123,9 @@ pub trait ParallelIterator: Sized {
 
     /// Executes `OP` on each item produced by the iterator, in parallel.
     fn for_each<OP>(self, op: OP)
-        where OP: Fn(Self::Item) + Sync
+        where OP: threadable::ThreadableFn<(Self::Item,), ()>
     {
-        for_each::for_each(self, &op)
+        for_each::for_each(self, op)
     }
 
     /// Counts the number of items in this parallel iterator.

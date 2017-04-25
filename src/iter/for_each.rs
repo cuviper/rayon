@@ -1,24 +1,46 @@
 use super::ParallelIterator;
 use super::internal::*;
 use super::noop::*;
+use super::threadable::*;
 
-pub fn for_each<I, F, T>(pi: I, op: &F)
+pub fn for_each<I, F, T>(pi: I, op: F)
     where I: ParallelIterator<Item = T>,
-          F: Fn(T) + Sync,
+          F: ThreadableFn<(T,), ()>,
           T: Send
 {
-    let consumer = ForEachConsumer { op: op };
-    pi.drive_unindexed(consumer)
+    return op.with_threaded(Callback { pi: pi });
+
+    struct Callback<I> {
+        pi: I,
+    }
+
+    impl<T, I> ThreadedCallback<(T,), ()> for Callback<I>
+        where I: ParallelIterator<Item = T>,
+              T: Send
+    {
+        type Output = ();
+
+        fn callback<F>(self, op: F)
+            where F: ThreadedFn<(T,), ()>
+        {
+            use super::ParallelIterator;
+
+            let consumer = ForEachConsumer { op: op };
+            self.pi.drive_unindexed(consumer)
+        }
+
+        private_impl!{}
+    }
 }
 
-struct ForEachConsumer<'f, F: 'f> {
-    op: &'f F,
+struct ForEachConsumer<F> {
+    op: F,
 }
 
-impl<'f, F, T> Consumer<T> for ForEachConsumer<'f, F>
-    where F: Fn(T) + Sync
+impl<F, T> Consumer<T> for ForEachConsumer<F>
+    where F: ThreadedFn<(T,), ()>
 {
-    type Folder = ForEachConsumer<'f, F>;
+    type Folder = Self;
     type Reducer = NoopReducer;
     type Result = ();
 
@@ -35,13 +57,13 @@ impl<'f, F, T> Consumer<T> for ForEachConsumer<'f, F>
     }
 }
 
-impl<'f, F, T> Folder<T> for ForEachConsumer<'f, F>
-    where F: Fn(T) + Sync
+impl<F, T> Folder<T> for ForEachConsumer<F>
+    where F: ThreadedFn<(T,), ()>
 {
     type Result = ();
 
-    fn consume(self, item: T) -> Self {
-        (self.op)(item);
+    fn consume(mut self, item: T) -> Self {
+        self.op.call((item,));
         self
     }
 
@@ -52,11 +74,11 @@ impl<'f, F, T> Folder<T> for ForEachConsumer<'f, F>
     }
 }
 
-impl<'f, F, T> UnindexedConsumer<T> for ForEachConsumer<'f, F>
-    where F: Fn(T) + Sync
+impl<F, T> UnindexedConsumer<T> for ForEachConsumer<F>
+    where F: ThreadedFn<(T,), ()>
 {
     fn split_off_left(&self) -> Self {
-        ForEachConsumer { op: self.op }
+        ForEachConsumer { op: self.op.split_off_left() }
     }
 
     fn to_reducer(&self) -> NoopReducer {
