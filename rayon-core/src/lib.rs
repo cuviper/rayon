@@ -67,6 +67,7 @@ pub use join::{join, join_context};
 pub use scope::{scope, Scope};
 pub use scope::{scope_fifo, ScopeFifo};
 pub use spawn::{spawn, spawn_fifo};
+pub use thread_pool::broadcast;
 pub use thread_pool::current_thread_has_pending_tasks;
 pub use thread_pool::current_thread_index;
 pub use thread_pool::ThreadPool;
