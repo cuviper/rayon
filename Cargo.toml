@@ -1,25 +1,25 @@
 [package]
-name = "rayon"
-version = "1.7.0"
+name = "rustc-rayon"
+version = "0.5.0"
 authors = ["Niko Matsakis <niko@alum.mit.edu>",
            "Josh Stone <cuviper@gmail.com>"]
-description = "Simple work-stealing parallelism for Rust"
+description = "Simple work-stealing parallelism for Rust - fork for rustc"
 rust-version = "1.59"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/rayon-rs/rayon"
-documentation = "https://docs.rs/rayon/"
+repository = "https://github.com/rust-lang/rustc-rayon"
+documentation = "https://docs.rs/rustc-rayon/"
 readme = "README.md"
 keywords = ["parallel", "thread", "concurrency", "join", "performance"]
 categories = ["concurrency"]
 exclude = ["/ci/*", "/scripts/*", "/.github/*", "/bors.toml"]
 
 [workspace]
-members = ["rayon-demo", "rayon-core"]
+members = ["rayon-core"]
 exclude = ["ci"]
 
 [dependencies]
-rayon-core = { version = "1.11.0", path = "rayon-core" }
+rayon-core = { version = "0.5", path = "rayon-core", package = "rustc-rayon-core" }
 
 # This is a public dependency!
 [dependencies.either]

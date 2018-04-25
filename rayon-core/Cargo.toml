@@ -1,12 +1,12 @@
 [package]
-name = "rayon-core"
-version = "1.11.0"
+name = "rustc-rayon-core"
+version = "0.5.0"
 authors = ["Niko Matsakis <niko@alum.mit.edu>",
            "Josh Stone <cuviper@gmail.com>"]
-description = "Core APIs for Rayon"
+description = "Core APIs for Rayon - fork for rustc"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/rayon-rs/rayon"
-documentation = "https://docs.rs/rayon/"
+repository = "https://github.com/rust-lang/rustc-rayon"
+documentation = "https://docs.rs/rustc-rayon-core/"
 rust-version = "1.59"
 edition = "2021"
 links = "rayon-core"
