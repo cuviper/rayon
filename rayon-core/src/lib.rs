@@ -93,6 +93,8 @@ mod unwind;
 mod compile_fail;
 mod test;
 
+pub mod tlv;
+
 pub use self::broadcast::{broadcast, spawn_broadcast, BroadcastContext};
 pub use self::join::{join, join_context};
 pub use self::registry::ThreadBuilder;

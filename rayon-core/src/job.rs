@@ -1,4 +1,5 @@
 use crate::latch::Latch;
+use crate::tlv;
 use crate::unwind;
 use crossbeam_deque::{Injector, Steal};
 use std::any::Any;
@@ -78,6 +79,7 @@ where
     pub(super) latch: L,
     func: UnsafeCell<Option<F>>,
     result: UnsafeCell<JobResult<R>>,
+    tlv: usize,
 }
 
 impl<L, F, R> StackJob<L, F, R>
@@ -86,11 +88,12 @@ where
     F: FnOnce(bool) -> R + Send,
     R: Send,
 {
-    pub(super) fn new(func: F, latch: L) -> StackJob<L, F, R> {
+    pub(super) fn new(tlv: usize, func: F, latch: L) -> StackJob<L, F, R> {
         StackJob {
             latch,
             func: UnsafeCell::new(Some(func)),
             result: UnsafeCell::new(JobResult::None),
+            tlv,
         }
     }
 
@@ -115,6 +118,7 @@ where
 {
     unsafe fn execute(this: *const ()) {
         let this = &*(this as *const Self);
+        tlv::set(this.tlv);
         let abort = unwind::AbortIfPanic;
         let func = (*this.func.get()).take().unwrap();
         (*this.result.get()) = JobResult::call(func);
@@ -134,14 +138,15 @@ where
     BODY: FnOnce() + Send,
 {
     job: BODY,
+    tlv: usize,
 }
 
 impl<BODY> HeapJob<BODY>
 where
     BODY: FnOnce() + Send,
 {
-    pub(super) fn new(job: BODY) -> Box<Self> {
-        Box::new(HeapJob { job })
+    pub(super) fn new(tlv: usize, job: BODY) -> Box<Self> {
+        Box::new(HeapJob { job, tlv })
     }
 
     /// Creates a `JobRef` from this job -- note that this hides all
@@ -166,6 +171,7 @@ where
 {
     unsafe fn execute(this: *const ()) {
         let this = Box::from_raw(this as *mut Self);
+        tlv::set(this.tlv);
         (this.job)();
     }
 }

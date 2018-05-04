@@ -9,6 +9,7 @@ use crate::broadcast::BroadcastContext;
 use crate::job::{ArcJob, HeapJob, JobFifo, JobRef};
 use crate::latch::{CountLatch, CountLockLatch, Latch};
 use crate::registry::{global_registry, in_worker, Registry, WorkerThread};
+use crate::tlv;
 use crate::unwind;
 use std::any::Any;
 use std::fmt;
@@ -76,6 +77,9 @@ struct ScopeBase<'scope> {
     /// `Sync`, but it's still safe to let the `Scope` implement `Sync` because
     /// the closures are only *moved* across threads to be executed.
     marker: PhantomData<Box<dyn FnOnce(&Scope<'scope>) + Send + Sync + 'scope>>,
+
+    /// The TLV at the scope's creation. Used to set the TLV for spawned jobs.
+    tlv: usize,
 }
 
 /// Creates a "fork-join" scope `s` and invokes the closure with a
@@ -540,7 +544,7 @@ impl<'scope> Scope<'scope> {
         BODY: FnOnce(&Scope<'scope>) + Send + 'scope,
     {
         let scope_ptr = ScopePtr(self);
-        let job = HeapJob::new(move || unsafe {
+        let job = HeapJob::new(self.base.tlv, move || unsafe {
             // SAFETY: this job will execute before the scope ends.
             let scope = scope_ptr.as_ref();
             ScopeBase::execute_job(&scope.base, move || body(scope))
@@ -600,7 +604,7 @@ impl<'scope> ScopeFifo<'scope> {
         BODY: FnOnce(&ScopeFifo<'scope>) + Send + 'scope,
     {
         let scope_ptr = ScopePtr(self);
-        let job = HeapJob::new(move || unsafe {
+        let job = HeapJob::new(self.base.tlv, move || unsafe {
             // SAFETY: this job will execute before the scope ends.
             let scope = scope_ptr.as_ref();
             ScopeBase::execute_job(&scope.base, move || body(scope))
@@ -652,6 +656,7 @@ impl<'scope> ScopeBase<'scope> {
             panic: AtomicPtr::new(ptr::null_mut()),
             job_completed_latch: ScopeLatch::new(owner),
             marker: PhantomData,
+            tlv: tlv::get(),
         }
     }
 
@@ -690,6 +695,10 @@ impl<'scope> ScopeBase<'scope> {
     {
         let result = unsafe { Self::execute_job_closure(self, func) };
         self.job_completed_latch.wait(owner);
+
+        // Restore the TLV if we ran some jobs while waiting
+        tlv::set(self.tlv);
+
         self.maybe_propagate_panic();
         result.unwrap() // only None if `op` panicked, and that would have been propagated
     }
@@ -749,6 +758,10 @@ impl<'scope> ScopeBase<'scope> {
         let panic = self.panic.swap(ptr::null_mut(), Ordering::Relaxed);
         if !panic.is_null() {
             let value = unsafe { Box::from_raw(panic) };
+
+            // Restore the TLV if we ran some jobs while waiting
+            tlv::set(self.tlv);
+
             unwind::resume_unwinding(*value);
         }
     }

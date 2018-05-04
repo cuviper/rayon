@@ -1,6 +1,7 @@
 use crate::job::StackJob;
 use crate::latch::SpinLatch;
 use crate::registry::{self, WorkerThread};
+use crate::tlv;
 use crate::unwind;
 use std::any::Any;
 
@@ -130,10 +131,11 @@ where
     }
 
     registry::in_worker(|worker_thread, injected| unsafe {
+        let tlv = tlv::get();
         // Create virtual wrapper for task b; this all has to be
         // done here so that the stack frame can keep it all live
         // long enough.
-        let job_b = StackJob::new(call_b(oper_b), SpinLatch::new(worker_thread));
+        let job_b = StackJob::new(tlv, call_b(oper_b), SpinLatch::new(worker_thread));
         let job_b_ref = job_b.as_job_ref();
         let job_b_id = job_b_ref.id();
         worker_thread.push(job_b_ref);
@@ -142,7 +144,7 @@ where
         let status_a = unwind::halt_unwinding(call_a(oper_a, injected));
         let result_a = match status_a {
             Ok(v) => v,
-            Err(err) => join_recover_from_panic(worker_thread, &job_b.latch, err),
+            Err(err) => join_recover_from_panic(worker_thread, &job_b.latch, err, tlv),
         };
 
         // Now that task A has finished, try to pop job B from the
@@ -156,6 +158,10 @@ where
                     // Found it! Let's run it.
                     //
                     // Note that this could panic, but it's ok if we unwind here.
+
+                    // Restore the TLV since we might have run some jobs overwriting it when waiting for job b.
+                    tlv::set(tlv);
+
                     let result_b = job_b.run_inline(injected);
                     return (result_a, result_b);
                 } else {
@@ -170,6 +176,9 @@ where
             }
         }
 
+        // Restore the TLV since we might have run some jobs overwriting it when waiting for job b.
+        tlv::set(tlv);
+
         (result_a, job_b.into_result())
     })
 }
@@ -182,7 +191,12 @@ unsafe fn join_recover_from_panic(
     worker_thread: &WorkerThread,
     job_b_latch: &SpinLatch<'_>,
     err: Box<dyn Any + Send>,
+    tlv: usize,
 ) -> ! {
     worker_thread.wait_until(job_b_latch);
+
+    // Restore the TLV since we might have run some jobs overwriting it when waiting for job b.
+    tlv::set(tlv);
+
     unwind::resume_unwinding(err)
 }
