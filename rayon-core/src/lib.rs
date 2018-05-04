@@ -89,6 +89,7 @@ mod sleep;
 mod spawn;
 mod thread_pool;
 mod unwind;
+mod worker_local;
 
 mod compile_fail;
 mod test;
@@ -105,6 +106,7 @@ pub use self::thread_pool::current_thread_has_pending_tasks;
 pub use self::thread_pool::current_thread_index;
 pub use self::thread_pool::ThreadPool;
 pub use self::thread_pool::{yield_local, yield_now, Yield};
+pub use worker_local::WorkerLocal;
 
 use self::registry::{CustomSpawn, DefaultSpawn, ThreadSpawn};
 

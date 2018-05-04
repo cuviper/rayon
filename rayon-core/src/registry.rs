@@ -675,12 +675,12 @@ pub(super) struct WorkerThread {
     /// local queue used for `spawn_fifo` indirection
     fifo: JobFifo,
 
-    index: usize,
+    pub(crate) index: usize,
 
     /// A weak random number generator.
     rng: XorShift64Star,
 
-    registry: Arc<Registry>,
+    pub(crate) registry: Arc<Registry>,
 }
 
 // This is a bit sketchy, but basically: the WorkerThread is
