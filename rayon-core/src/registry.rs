@@ -5,8 +5,8 @@ use crate::log::Logger;
 use crate::sleep::Sleep;
 use crate::unwind;
 use crate::{
-    ErrorKind, ExitHandler, PanicHandler, StartHandler, ThreadPoolBuildError, ThreadPoolBuilder,
-    Yield,
+    DeadlockHandler, ErrorKind, ExitHandler, PanicHandler, StartHandler, ThreadPoolBuildError,
+    ThreadPoolBuilder, Yield,
 };
 use crossbeam_deque::{Injector, Steal, Stealer, Worker};
 use std::cell::Cell;
@@ -129,13 +129,14 @@ where
     }
 }
 
-pub(super) struct Registry {
+pub struct Registry {
     logger: Logger,
     thread_infos: Vec<ThreadInfo>,
     sleep: Sleep,
     injected_jobs: Injector<JobRef>,
     broadcasts: Mutex<Vec<Worker<JobRef>>>,
     panic_handler: Option<Box<PanicHandler>>,
+    deadlock_handler: Option<Box<DeadlockHandler>>,
     start_handler: Option<Box<StartHandler>>,
     exit_handler: Option<Box<ExitHandler>>,
 
@@ -289,6 +290,7 @@ impl Registry {
             broadcasts: Mutex::new(broadcasts),
             terminate_count: AtomicUsize::new(1),
             panic_handler: builder.take_panic_handler(),
+            deadlock_handler: builder.take_deadlock_handler(),
             start_handler: builder.take_start_handler(),
             exit_handler: builder.take_exit_handler(),
         });
@@ -316,7 +318,7 @@ impl Registry {
         Ok(registry)
     }
 
-    pub(super) fn current() -> Arc<Registry> {
+    pub fn current() -> Arc<Registry> {
         unsafe {
             let worker_thread = WorkerThread::current();
             let registry = if worker_thread.is_null() {
@@ -623,6 +625,24 @@ impl Registry {
     }
 }
 
+/// Mark a Rayon worker thread as blocked. This triggers the deadlock handler
+/// if no other worker thread is active
+#[inline]
+pub fn mark_blocked() {
+    let worker_thread = WorkerThread::current();
+    assert!(!worker_thread.is_null());
+    unsafe {
+        let registry = &(*worker_thread).registry;
+        registry.sleep.mark_blocked(&registry.deadlock_handler)
+    }
+}
+
+/// Mark a previously blocked Rayon worker thread as unblocked
+#[inline]
+pub fn mark_unblocked(registry: &Registry) {
+    registry.sleep.mark_unblocked()
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct RegistryId {
     addr: usize,
@@ -822,9 +842,12 @@ impl WorkerThread {
                 self.execute(job);
                 idle_state = self.registry.sleep.start_looking(self.index, latch);
             } else {
-                self.registry
-                    .sleep
-                    .no_work_found(&mut idle_state, latch, || self.has_injected_job())
+                self.registry.sleep.no_work_found(
+                    &mut idle_state,
+                    latch,
+                    || self.has_injected_job(),
+                    &self.registry.deadlock_handler,
+                )
             }
         }
 

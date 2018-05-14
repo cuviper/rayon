@@ -61,9 +61,6 @@
 //! conflicting requirements will need to be resolved before the build will
 //! succeed.
 
-#![deny(missing_debug_implementations)]
-#![deny(missing_docs)]
-#![deny(unreachable_pub)]
 #![warn(rust_2018_idioms)]
 
 use std::any::Any;
@@ -99,6 +96,7 @@ pub mod tlv;
 pub use self::broadcast::{broadcast, spawn_broadcast, BroadcastContext};
 pub use self::join::{join, join_context};
 pub use self::registry::ThreadBuilder;
+pub use self::registry::{mark_blocked, mark_unblocked, Registry};
 pub use self::scope::{in_place_scope, scope, Scope};
 pub use self::scope::{in_place_scope_fifo, scope_fifo, ScopeFifo};
 pub use self::spawn::{spawn, spawn_fifo};
@@ -189,6 +187,9 @@ pub struct ThreadPoolBuilder<S = DefaultSpawn> {
     /// The stack size for the created worker threads
     stack_size: Option<usize>,
 
+    /// Closure invoked on deadlock.
+    deadlock_handler: Option<Box<DeadlockHandler>>,
+
     /// Closure invoked on worker thread start.
     start_handler: Option<Box<StartHandler>>,
 
@@ -217,6 +218,9 @@ pub struct Configuration {
 /// may be invoked multiple times in parallel.
 type PanicHandler = dyn Fn(Box<dyn Any + Send>) + Send + Sync;
 
+/// The type for a closure that gets invoked when the Rayon thread pool deadlocks
+type DeadlockHandler = dyn Fn() + Send + Sync;
+
 /// The type for a closure that gets invoked when a thread starts. The
 /// closure is passed the index of the thread on which it is invoked.
 /// Note that this same closure may be invoked multiple times in parallel.
@@ -237,6 +241,7 @@ impl Default for ThreadPoolBuilder {
             stack_size: None,
             start_handler: None,
             exit_handler: None,
+            deadlock_handler: None,
             spawn_handler: DefaultSpawn,
             breadth_first: false,
         }
@@ -454,6 +459,7 @@ impl<S> ThreadPoolBuilder<S> {
             stack_size: self.stack_size,
             start_handler: self.start_handler,
             exit_handler: self.exit_handler,
+            deadlock_handler: self.deadlock_handler,
             breadth_first: self.breadth_first,
         }
     }
@@ -610,6 +616,20 @@ impl<S> ThreadPoolBuilder<S> {
 
     fn get_breadth_first(&self) -> bool {
         self.breadth_first
+    }
+
+    /// Takes the current deadlock callback, leaving `None`.
+    fn take_deadlock_handler(&mut self) -> Option<Box<DeadlockHandler>> {
+        self.deadlock_handler.take()
+    }
+
+    /// Set a callback to be invoked on current deadlock.
+    pub fn deadlock_handler<H>(mut self, deadlock_handler: H) -> Self
+    where
+        H: Fn() + Send + Sync + 'static,
+    {
+        self.deadlock_handler = Some(Box::new(deadlock_handler));
+        self
     }
 
     /// Takes the current thread start callback, leaving `None`.
@@ -778,6 +798,7 @@ impl<S> fmt::Debug for ThreadPoolBuilder<S> {
             ref get_thread_name,
             ref panic_handler,
             ref stack_size,
+            ref deadlock_handler,
             ref start_handler,
             ref exit_handler,
             spawn_handler: _,
@@ -794,6 +815,7 @@ impl<S> fmt::Debug for ThreadPoolBuilder<S> {
         }
         let get_thread_name = get_thread_name.as_ref().map(|_| ClosurePlaceholder);
         let panic_handler = panic_handler.as_ref().map(|_| ClosurePlaceholder);
+        let deadlock_handler = deadlock_handler.as_ref().map(|_| ClosurePlaceholder);
         let start_handler = start_handler.as_ref().map(|_| ClosurePlaceholder);
         let exit_handler = exit_handler.as_ref().map(|_| ClosurePlaceholder);
 
@@ -802,6 +824,7 @@ impl<S> fmt::Debug for ThreadPoolBuilder<S> {
             .field("get_thread_name", &get_thread_name)
             .field("panic_handler", &panic_handler)
             .field("stack_size", &stack_size)
+            .field("deadlock_handler", &deadlock_handler)
             .field("start_handler", &start_handler)
             .field("exit_handler", &exit_handler)
             .field("breadth_first", &breadth_first)

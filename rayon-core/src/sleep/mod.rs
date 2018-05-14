@@ -4,6 +4,7 @@
 use crate::latch::CoreLatch;
 use crate::log::Event::*;
 use crate::log::Logger;
+use crate::DeadlockHandler;
 use crossbeam_utils::CachePadded;
 use std::sync::atomic::Ordering;
 use std::sync::{Condvar, Mutex};
@@ -13,6 +14,29 @@ use std::usize;
 mod counters;
 pub(crate) use self::counters::THREADS_MAX;
 use self::counters::{AtomicCounters, JobsEventCounter};
+
+struct SleepData {
+    /// The number of threads in the thread pool.
+    worker_count: usize,
+
+    /// The number of threads in the thread pool which are running and
+    /// aren't blocked in user code or sleeping.
+    active_threads: usize,
+
+    /// The number of threads which are blocked in user code.
+    /// This doesn't include threads blocked by this module.
+    blocked_threads: usize,
+}
+
+impl SleepData {
+    /// Checks if the conditions for a deadlock holds and if so calls the deadlock handler
+    #[inline]
+    pub fn deadlock_check(&self, deadlock_handler: &Option<Box<DeadlockHandler>>) {
+        if self.active_threads == 0 && self.blocked_threads > 0 {
+            (deadlock_handler.as_ref().unwrap())();
+        }
+    }
+}
 
 /// The `Sleep` struct is embedded into each registry. It governs the waking and sleeping
 /// of workers. It has callbacks that are invoked periodically at significant events,
@@ -29,6 +53,8 @@ pub(super) struct Sleep {
     worker_sleep_states: Vec<CachePadded<WorkerSleepState>>,
 
     counters: AtomicCounters,
+
+    data: Mutex<SleepData>,
 }
 
 /// An instance of this struct is created when a thread becomes idle.
@@ -68,7 +94,36 @@ impl Sleep {
             logger,
             worker_sleep_states: (0..n_threads).map(|_| Default::default()).collect(),
             counters: AtomicCounters::new(),
+            data: Mutex::new(SleepData {
+                worker_count: n_threads,
+                active_threads: n_threads,
+                blocked_threads: 0,
+            }),
         }
+    }
+
+    /// Mark a Rayon worker thread as blocked. This triggers the deadlock handler
+    /// if no other worker thread is active
+    #[inline]
+    pub fn mark_blocked(&self, deadlock_handler: &Option<Box<DeadlockHandler>>) {
+        let mut data = self.data.lock().unwrap();
+        debug_assert!(data.active_threads > 0);
+        debug_assert!(data.blocked_threads < data.worker_count);
+        debug_assert!(data.active_threads > 0);
+        data.active_threads -= 1;
+        data.blocked_threads += 1;
+
+        data.deadlock_check(deadlock_handler);
+    }
+
+    /// Mark a previously blocked Rayon worker thread as unblocked
+    #[inline]
+    pub fn mark_unblocked(&self) {
+        let mut data = self.data.lock().unwrap();
+        debug_assert!(data.active_threads < data.worker_count);
+        debug_assert!(data.blocked_threads > 0);
+        data.active_threads += 1;
+        data.blocked_threads -= 1;
     }
 
     #[inline]
@@ -106,6 +161,7 @@ impl Sleep {
         idle_state: &mut IdleState,
         latch: &CoreLatch,
         has_injected_jobs: impl FnOnce() -> bool,
+        deadlock_handler: &Option<Box<DeadlockHandler>>,
     ) {
         if idle_state.rounds < ROUNDS_UNTIL_SLEEPY {
             thread::yield_now();
@@ -119,7 +175,7 @@ impl Sleep {
             thread::yield_now();
         } else {
             debug_assert_eq!(idle_state.rounds, ROUNDS_UNTIL_SLEEPING);
-            self.sleep(idle_state, latch, has_injected_jobs);
+            self.sleep(idle_state, latch, has_injected_jobs, deadlock_handler);
         }
     }
 
@@ -142,6 +198,7 @@ impl Sleep {
         idle_state: &mut IdleState,
         latch: &CoreLatch,
         has_injected_jobs: impl FnOnce() -> bool,
+        deadlock_handler: &Option<Box<DeadlockHandler>>,
     ) {
         let worker_index = idle_state.worker_index;
 
@@ -215,6 +272,13 @@ impl Sleep {
             // the one that wakes us.)
             self.counters.sub_sleeping_thread();
         } else {
+            {
+                // Decrement the number of active threads and check for a deadlock
+                let mut data = self.data.lock().unwrap();
+                data.active_threads -= 1;
+                data.deadlock_check(deadlock_handler);
+            }
+
             // If we don't see an injected job (the normal case), then flag
             // ourselves as asleep and wait till we are notified.
             //
@@ -371,6 +435,9 @@ impl Sleep {
             // wake, when in fact there is nothing left for them to
             // do.
             self.counters.sub_sleeping_thread();
+
+            // Increment the number of active threads
+            self.data.lock().unwrap().active_threads += 1;
 
             self.logger.log(|| ThreadNotify { worker: index });
 
