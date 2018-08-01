@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, Condvar};
 use std::usize;
 
-use sleep::Sleep;
+use crate::sleep::Sleep;
 
 /// We define various kinds of latches, which are all a primitive signaling
 /// mechanism. A latch starts as false. Eventually someone calls `set()` and
@@ -30,12 +30,12 @@ use sleep::Sleep;
 /// - Once `set()` occurs, the next `probe()` *will* observe it.  This
 ///   typically requires a seq-cst ordering. See [the "tickle-then-get-sleepy" scenario in the sleep
 ///   README](/src/sleep/README.md#tickle-then-get-sleepy) for details.
-pub trait Latch: LatchProbe {
+crate trait Latch: LatchProbe {
     /// Set the latch, signalling others.
     fn set(&self);
 }
 
-pub trait LatchProbe {
+crate trait LatchProbe {
     /// Test if the latch is set.
     fn probe(&self) -> bool;
 }
@@ -43,13 +43,13 @@ pub trait LatchProbe {
 /// Spin latches are the simplest, most efficient kind, but they do
 /// not support a `wait()` operation. They just have a boolean flag
 /// that becomes true when `set()` is called.
-pub struct SpinLatch {
+crate struct SpinLatch {
     b: AtomicBool,
 }
 
 impl SpinLatch {
     #[inline]
-    pub fn new() -> SpinLatch {
+    crate fn new() -> SpinLatch {
         SpinLatch { b: AtomicBool::new(false) }
     }
 }
@@ -70,14 +70,14 @@ impl Latch for SpinLatch {
 
 /// A Latch starts as false and eventually becomes true. You can block
 /// until it becomes true.
-pub struct LockLatch {
+crate struct LockLatch {
     m: Mutex<bool>,
     v: Condvar,
 }
 
 impl LockLatch {
     #[inline]
-    pub fn new() -> LockLatch {
+    crate fn new() -> LockLatch {
         LockLatch {
             m: Mutex::new(false),
             v: Condvar::new(),
@@ -85,7 +85,7 @@ impl LockLatch {
     }
 
     /// Block until latch is set.
-    pub fn wait(&self) {
+    crate fn wait(&self) {
         let mut guard = self.m.lock().unwrap();
         while !*guard {
             guard = self.v.wait(guard).unwrap();
@@ -117,18 +117,18 @@ impl Latch for LockLatch {
 /// decrements the counter. The latch is only "set" (in the sense that
 /// `probe()` returns true) once the counter reaches zero.
 #[derive(Debug)]
-pub struct CountLatch {
+crate struct CountLatch {
     counter: AtomicUsize,
 }
 
 impl CountLatch {
     #[inline]
-    pub fn new() -> CountLatch {
+    crate fn new() -> CountLatch {
         CountLatch { counter: AtomicUsize::new(1) }
     }
 
     #[inline]
-    pub fn increment(&self) {
+    crate fn increment(&self) {
         debug_assert!(!self.probe());
         self.counter.fetch_add(1, Ordering::Relaxed);
     }
@@ -154,14 +154,14 @@ impl Latch for CountLatch {
 /// A tickling latch wraps another latch type, and will also awaken a thread
 /// pool when it is set.  This is useful for jobs injected between thread pools,
 /// so the source pool can continue processing its own work while waiting.
-pub struct TickleLatch<'a, L: Latch> {
+crate struct TickleLatch<'a, L: Latch> {
     inner: L,
     sleep: &'a Sleep,
 }
 
 impl<'a, L: Latch> TickleLatch<'a, L> {
     #[inline]
-    pub fn new(latch: L, sleep: &'a Sleep) -> Self {
+    crate fn new(latch: L, sleep: &'a Sleep) -> Self {
         TickleLatch {
             inner: latch,
             sleep: sleep,

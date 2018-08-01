@@ -3,8 +3,8 @@
 //! rayon-core thread pool, rather than direct use by end users.
 
 use std::fmt;
-use latch::LatchProbe;
-use registry;
+use crate::latch::LatchProbe;
+use crate::registry;
 
 /// Represents the active worker thread.
 pub struct WorkerThread<'w> {
@@ -39,7 +39,7 @@ impl<'w> WorkerThread<'w> {
 }
 
 impl<'w> fmt::Debug for WorkerThread<'w> {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("WorkerThread")
             .field("pool", &self.thread.registry().id())
             .field("index", &self.thread.index())
@@ -52,7 +52,7 @@ impl<'w> fmt::Debug for WorkerThread<'w> {
 /// that callback is returned with `Some`. Otherwise, if we are not on
 /// a Rayon worker thread, `None` is immediately returned.
 pub fn if_in_worker_thread<F,R>(if_true: F) -> Option<R>
-    where F: FnOnce(&WorkerThread) -> R,
+    where F: FnOnce(&WorkerThread<'_>) -> R,
 {
     let worker_thread = registry::WorkerThread::current();
     if worker_thread.is_null() {

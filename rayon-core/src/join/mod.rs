@@ -1,11 +1,11 @@
-use latch::{LatchProbe, SpinLatch};
-use log::Event::*;
-use job::StackJob;
-use registry::{self, WorkerThread};
+use crate::latch::{LatchProbe, SpinLatch};
+use crate::log::Event::*;
+use crate::job::StackJob;
+use crate::registry::{self, WorkerThread};
 use std::any::Any;
-use unwind;
+use crate::unwind;
 
-use FnContext;
+use crate::FnContext;
 
 #[cfg(test)]
 mod test;
@@ -169,7 +169,7 @@ pub fn join_context<A, B, RA, RB>(oper_a: A, oper_b: B) -> (RA, RB)
 #[cold] // cold path
 unsafe fn join_recover_from_panic(worker_thread: &WorkerThread,
                                   job_b_latch: &SpinLatch,
-                                  err: Box<Any + Send>)
+                                  err: Box<dyn Any + Send>)
                                   -> !
 {
     worker_thread.wait_until(job_b_latch);

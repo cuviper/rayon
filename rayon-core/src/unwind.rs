@@ -12,17 +12,17 @@ use std::thread;
 /// `Err` result. The assumption is that any panic will be propagated
 /// later with `resume_unwinding`, and hence `f` can be treated as
 /// exception safe.
-pub fn halt_unwinding<F, R>(func: F) -> thread::Result<R>
+crate fn halt_unwinding<F, R>(func: F) -> thread::Result<R>
     where F: FnOnce() -> R
 {
     panic::catch_unwind(AssertUnwindSafe(func))
 }
 
-pub fn resume_unwinding(payload: Box<Any + Send>) -> ! {
+crate fn resume_unwinding(payload: Box<dyn Any + Send>) -> ! {
     panic::resume_unwind(payload)
 }
 
-pub struct AbortIfPanic;
+crate struct AbortIfPanic;
 
 fn aborting() {
     let _ = writeln!(&mut stderr(), "Rayon: detected unexpected panic; aborting");

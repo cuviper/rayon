@@ -4,11 +4,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[allow(deprecated)]
-use Configuration;
-use ThreadPoolBuilder;
-use join;
-use thread_pool::ThreadPool;
-use unwind;
+use crate::Configuration;
+use crate::ThreadPoolBuilder;
+use crate::join;
+use crate::thread_pool::ThreadPool;
+use crate::unwind;
 
 #[test]
 #[should_panic(expected = "Hello, world!")]
@@ -67,7 +67,7 @@ fn sleeper_stop() {
 }
 
 /// Create a start/exit handler that increments an atomic counter.
-fn count_handler() -> (Arc<AtomicUsize>, Box<::StartHandler>) {
+fn count_handler() -> (Arc<AtomicUsize>, Box<crate::StartHandler>) {
     let count = Arc::new(AtomicUsize::new(0));
     (count.clone(), Box::new(move |_| { count.fetch_add(1, Ordering::SeqCst); }))
 }

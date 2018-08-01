@@ -4,15 +4,15 @@
 //! [`ThreadPool`]: struct.ThreadPool.html
 
 #[allow(deprecated)]
-use Configuration;
-use {ThreadPoolBuilder, ThreadPoolBuildError};
-use join;
-use {scope, Scope};
-use spawn;
+use crate::Configuration;
+use crate::{ThreadPoolBuilder, ThreadPoolBuildError};
+use crate::join;
+use crate::{scope, Scope};
+use crate::spawn;
 use std::sync::Arc;
 use std::error::Error;
 use std::fmt;
-use registry::{Registry, WorkerThread};
+use crate::registry::{Registry, WorkerThread};
 
 mod internal;
 mod test;
@@ -52,7 +52,7 @@ pub struct ThreadPool {
     registry: Arc<Registry>,
 }
 
-pub fn build(builder: ThreadPoolBuilder) -> Result<ThreadPool, ThreadPoolBuildError> {
+crate fn build(builder: ThreadPoolBuilder) -> Result<ThreadPool, ThreadPoolBuildError> {
     let registry = try!(Registry::new(builder));
     Ok(ThreadPool { registry: registry })
 }
@@ -61,7 +61,7 @@ impl ThreadPool {
     #[deprecated(note = "Use `ThreadPoolBuilder::build`")]
     #[allow(deprecated)]
     /// Deprecated in favor of `ThreadPoolBuilder::build`.
-    pub fn new(configuration: Configuration) -> Result<ThreadPool, Box<Error>> {
+    pub fn new(configuration: Configuration) -> Result<ThreadPool, Box<dyn Error>> {
         build(configuration.into_builder()).map_err(|e| e.into())
     }
 
@@ -77,6 +77,7 @@ impl ThreadPool {
     /// [f]: fn.initialize.html
     #[cfg(rayon_unstable)]
     pub fn global() -> &'static Arc<ThreadPool> {
+        use lazy_static::lazy_static;
         lazy_static! {
             static ref DEFAULT_THREAD_POOL: Arc<ThreadPool> =
                 Arc::new(ThreadPool { registry: Registry::global() });
@@ -256,7 +257,7 @@ impl Drop for ThreadPool {
 }
 
 impl fmt::Debug for ThreadPool {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("ThreadPool")
             .field("num_threads", &self.current_num_threads())
             .field("id", &self.registry.id())

@@ -1,6 +1,6 @@
 use std::mem;
 
-pub fn leak<T>(v: T) -> &'static T {
+crate fn leak<T>(v: T) -> &'static T {
     unsafe {
         let b = Box::new(v);
         let p: *const T = &*b;

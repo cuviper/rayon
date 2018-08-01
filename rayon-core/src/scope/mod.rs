@@ -4,9 +4,9 @@
 //! [`scope()`]: fn.scope.html
 //! [`join()`]: ../join/join.fn.html
 
-use latch::{Latch, CountLatch};
-use log::Event::*;
-use job::HeapJob;
+use crate::latch::{Latch, CountLatch};
+use crate::log::Event::*;
+use crate::job::HeapJob;
 use std::any::Any;
 use std::fmt;
 use std::marker::PhantomData;
@@ -14,8 +14,8 @@ use std::mem;
 use std::ptr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, Ordering};
-use registry::{in_worker, WorkerThread, Registry};
-use unwind;
+use crate::registry::{in_worker, WorkerThread, Registry};
+use crate::unwind;
 
 #[cfg(test)]
 mod test;
@@ -35,7 +35,7 @@ pub struct Scope<'scope> {
 
     /// if some job panicked, the error is stored here; it will be
     /// propagated to the one who created the scope
-    panic: AtomicPtr<Box<Any + Send + 'static>>,
+    panic: AtomicPtr<Box<dyn Any + Send + 'static>>,
 
     /// latch to set when the counter drops to zero (and hence this scope is complete)
     job_completed_latch: CountLatch,
@@ -44,7 +44,7 @@ pub struct Scope<'scope> {
     /// all of which outlive `'scope`.  They're not actually required to be
     /// `Sync`, but it's still safe to let the `Scope` implement `Sync` because
     /// the closures are only *moved* across threads to be executed.
-    marker: PhantomData<Box<FnOnce(&Scope<'scope>) + Send + Sync + 'scope>>,
+    marker: PhantomData<Box<dyn FnOnce(&Scope<'scope>) + Send + Sync + 'scope>>,
 }
 
 /// Create a "fork-join" scope `s` and invokes the closure with a
@@ -367,7 +367,7 @@ impl<'scope> Scope<'scope> {
         }
     }
 
-    unsafe fn job_panicked(&self, err: Box<Any + Send + 'static>) {
+    unsafe fn job_panicked(&self, err: Box<dyn Any + Send + 'static>) {
         // capture the first error we see, free the rest
         let nil = ptr::null_mut();
         let mut err = Box::new(err); // box up the fat ptr
@@ -397,7 +397,7 @@ impl<'scope> Scope<'scope> {
         let panic = self.panic.swap(ptr::null_mut(), Ordering::Relaxed);
         if !panic.is_null() {
             log!(ScopeCompletePanicked { owner_thread: owner_thread.index() });
-            let value: Box<Box<Any + Send + 'static>> = mem::transmute(panic);
+            let value: Box<Box<dyn Any + Send + 'static>> = mem::transmute(panic);
             unwind::resume_unwinding(*value);
         } else {
             log!(ScopeCompleteNoPanic { owner_thread: owner_thread.index() });
@@ -406,7 +406,7 @@ impl<'scope> Scope<'scope> {
 }
 
 impl<'scope> fmt::Debug for Scope<'scope> {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("Scope")
             .field("pool_id", &self.registry.id())
             .field("owner_thread_index", &self.owner_thread_index)

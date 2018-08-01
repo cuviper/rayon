@@ -8,10 +8,11 @@
 //! replacement of the now deprecated `RAYON_RS_LOG` environment
 //! variable, which is still supported for backwards compatibility.
 
+use lazy_static::lazy_static;
 use std::env;
 
 #[derive(Debug)]
-pub enum Event {
+crate enum Event {
     Tickle { worker: usize, old_state: usize },
     GetSleepy { worker: usize, state: usize },
     GotSleepy { worker: usize, old_state: usize, new_state: usize },
@@ -36,7 +37,7 @@ pub enum Event {
     ScopeCompleteNoPanic { owner_thread: usize },
 }
 
-pub const DUMP_LOGS: bool = cfg!(debug_assertions);
+crate const DUMP_LOGS: bool = cfg!(debug_assertions);
 
 lazy_static! {
     pub static ref LOG_ENV: bool = env::var("RAYON_LOG").is_ok() || env::var("RAYON_RS_LOG").is_ok();
@@ -44,6 +45,6 @@ lazy_static! {
 
 macro_rules! log {
     ($event:expr) => {
-        if ::log::DUMP_LOGS { if *::log::LOG_ENV { println!("{:?}", $event); } }
+        if crate::log::DUMP_LOGS { if *crate::log::LOG_ENV { println!("{:?}", $event); } }
     }
 }

@@ -1,13 +1,13 @@
-use latch::Latch;
+use crate::latch::Latch;
 use std::any::Any;
 use std::cell::UnsafeCell;
 use std::mem;
-use unwind;
+use crate::unwind;
 
-pub enum JobResult<T> {
+crate enum JobResult<T> {
     None,
     Ok(T),
-    Panic(Box<Any + Send>),
+    Panic(Box<dyn Any + Send>),
 }
 
 /// A `Job` is used to advertise work for other threads that they may
@@ -15,7 +15,7 @@ pub enum JobResult<T> {
 /// arranged in a deque, so that thieves can take from the top of the
 /// deque while the main worker manages the bottom of the deque. This
 /// deque is managed by the `thread_pool` module.
-pub trait Job {
+crate trait Job {
     /// Unsafe: this may be called from a different thread than the one
     /// which scheduled the job, so the implementer must ensure the
     /// appropriate traits are met, whether `Send`, `Sync`, or both.
@@ -29,7 +29,7 @@ pub trait Job {
 /// true type is something like `*const StackJob<...>`, but we hide
 /// it. We also carry the "execute fn" from the `Job` trait.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct JobRef {
+crate struct JobRef {
     pointer: *const (),
     execute_fn: unsafe fn(*const ()),
 }
@@ -40,7 +40,7 @@ unsafe impl Sync for JobRef {}
 impl JobRef {
     /// Unsafe: caller asserts that `data` will remain valid until the
     /// job is executed.
-    pub unsafe fn new<T>(data: *const T) -> JobRef
+    crate unsafe fn new<T>(data: *const T) -> JobRef
         where T: Job
     {
         let fn_ptr: unsafe fn(*const T) = <T as Job>::execute;
@@ -56,7 +56,7 @@ impl JobRef {
     }
 
     #[inline]
-    pub unsafe fn execute(&self) {
+    crate unsafe fn execute(&self) {
         (self.execute_fn)(self.pointer)
     }
 }
@@ -65,12 +65,12 @@ impl JobRef {
 /// executes it need not free any heap data, the cleanup occurs when
 /// the stack frame is later popped.  The function parameter indicates
 /// `true` if the job was stolen -- executed on a different thread.
-pub struct StackJob<L, F, R>
+crate struct StackJob<L, F, R>
     where L: Latch + Sync,
           F: FnOnce(bool) -> R + Send,
           R: Send
 {
-    pub latch: L,
+    crate latch: L,
     func: UnsafeCell<Option<F>>,
     result: UnsafeCell<JobResult<R>>,
 }
@@ -80,7 +80,7 @@ impl<L, F, R> StackJob<L, F, R>
           F: FnOnce(bool) -> R + Send,
           R: Send
 {
-    pub fn new(func: F, latch: L) -> StackJob<L, F, R> {
+    crate fn new(func: F, latch: L) -> StackJob<L, F, R> {
         StackJob {
             latch: latch,
             func: UnsafeCell::new(Some(func)),
@@ -88,15 +88,15 @@ impl<L, F, R> StackJob<L, F, R>
         }
     }
 
-    pub unsafe fn as_job_ref(&self) -> JobRef {
+    crate unsafe fn as_job_ref(&self) -> JobRef {
         JobRef::new(self)
     }
 
-    pub unsafe fn run_inline(self, stolen: bool) -> R {
+    crate unsafe fn run_inline(self, stolen: bool) -> R {
         self.func.into_inner().unwrap()(stolen)
     }
 
-    pub unsafe fn into_result(self) -> R {
+    crate unsafe fn into_result(self) -> R {
         self.result.into_inner().into_return_value()
     }
 }
@@ -125,7 +125,7 @@ impl<L, F, R> Job for StackJob<L, F, R>
 /// signal that the job executed.
 ///
 /// (Probably `StackJob` should be refactored in a similar fashion.)
-pub struct HeapJob<BODY>
+crate struct HeapJob<BODY>
     where BODY: FnOnce() + Send
 {
     job: UnsafeCell<Option<BODY>>,
@@ -134,14 +134,14 @@ pub struct HeapJob<BODY>
 impl<BODY> HeapJob<BODY>
     where BODY: FnOnce() + Send
 {
-    pub fn new(func: BODY) -> Self {
+    crate fn new(func: BODY) -> Self {
         HeapJob { job: UnsafeCell::new(Some(func)) }
     }
 
     /// Creates a `JobRef` from this job -- note that this hides all
     /// lifetimes, so it is up to you to ensure that this JobRef
     /// doesn't outlive any data that it closes over.
-    pub unsafe fn as_job_ref(self: Box<Self>) -> JobRef {
+    crate unsafe fn as_job_ref(self: Box<Self>) -> JobRef {
         let this: *const Self = mem::transmute(self);
         JobRef::new(this)
     }
@@ -162,7 +162,7 @@ impl<T> JobResult<T> {
     /// its JobResult is populated) into its return value.
     ///
     /// NB. This will panic if the job panicked.
-    pub fn into_return_value(self) -> T {
+    crate fn into_return_value(self) -> T {
         match self {
             JobResult::None => unreachable!(),
             JobResult::Ok(x) => x,

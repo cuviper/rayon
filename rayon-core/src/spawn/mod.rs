@@ -1,8 +1,8 @@
-use job::*;
-use registry::Registry;
+use crate::job::*;
+use crate::registry::Registry;
 use std::mem;
 use std::sync::Arc;
-use unwind;
+use crate::unwind;
 
 /// Fires off a task into the Rayon threadpool in the "static" or
 /// "global" scope.  Just like a standard thread, this task is not
@@ -59,7 +59,7 @@ pub fn spawn<F>(func: F)
 /// Unsafe because `registry` must not yet have terminated.
 ///
 /// Not a public API, but used elsewhere in Rayon.
-pub unsafe fn spawn_in<F>(func: F, registry: &Arc<Registry>)
+crate unsafe fn spawn_in<F>(func: F, registry: &Arc<Registry>)
     where F: FnOnce() + Send + 'static
 {
     // Ensure that registry cannot terminate until this job has

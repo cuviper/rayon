@@ -1,8 +1,8 @@
 #![cfg(test)]
 
 #[allow(deprecated)]
-use Configuration;
-use {ThreadPoolBuilder, ThreadPoolBuildError};
+use crate::Configuration;
+use crate::{ThreadPoolBuilder, ThreadPoolBuildError};
 use std::sync::{Arc, Barrier};
 use std::sync::atomic::{AtomicUsize, Ordering};
 

@@ -1,10 +1,10 @@
 //! Tests for the join code.
 
-use ThreadPoolBuilder;
-use join::*;
+use crate::ThreadPoolBuilder;
+use crate::join::*;
 use rand::{Rng, SeedableRng, XorShiftRng};
 use rand::distributions::Standard;
-use unwind;
+use crate::unwind;
 
 fn quick_sort<T: PartialOrd + Send>(v: &mut [T]) {
     if v.len() <= 1 {

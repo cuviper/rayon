@@ -1,12 +1,12 @@
-use ThreadPoolBuilder;
-use {scope, Scope};
+use crate::ThreadPoolBuilder;
+use crate::{scope, Scope};
 use rand::{Rng, SeedableRng, XorShiftRng};
 use std::cmp;
 use std::iter::once;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::vec;
-use unwind;
+use crate::unwind;
 
 #[test]
 fn scope_empty() {
@@ -75,14 +75,14 @@ struct Tree<T: Send> {
 }
 
 impl<T: Send> Tree<T> {
-    pub fn iter<'s>(&'s self) -> vec::IntoIter<&'s T> {
+    crate fn iter<'s>(&'s self) -> vec::IntoIter<&'s T> {
         once(&self.value)
             .chain(self.children.iter().flat_map(|c| c.iter()))
             .collect::<Vec<_>>() // seems like it shouldn't be needed... but prevents overflow
             .into_iter()
     }
 
-    pub fn update<OP>(&mut self, op: OP)
+    crate fn update<OP>(&mut self, op: OP)
         where OP: Fn(&mut T) + Sync,
               T: Send
     {

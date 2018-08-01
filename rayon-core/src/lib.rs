@@ -19,6 +19,9 @@
 //! conflicting requirements will need to be resolved before the build will
 //! succeed.
 
+#![feature(rust_2018_preview)]
+#![warn(rust_2018_idioms)]
+
 #![doc(html_root_url = "https://docs.rs/rayon-core/1.4")]
 #![deny(missing_debug_implementations)]
 #![deny(missing_docs)]
@@ -30,15 +33,6 @@ use std::error::Error;
 use std::marker::PhantomData;
 use std::str::FromStr;
 use std::fmt;
-
-extern crate crossbeam_deque;
-#[macro_use]
-extern crate lazy_static;
-extern crate libc;
-extern crate num_cpus;
-
-#[cfg(test)]
-extern crate rand;
 
 #[macro_use]
 mod log;
@@ -59,12 +53,12 @@ mod test;
 
 #[cfg(rayon_unstable)]
 pub mod internal;
-pub use thread_pool::ThreadPool;
-pub use thread_pool::current_thread_index;
-pub use thread_pool::current_thread_has_pending_tasks;
-pub use join::{join, join_context};
-pub use scope::{scope, Scope};
-pub use spawn::spawn;
+pub use self::thread_pool::ThreadPool;
+pub use self::thread_pool::current_thread_index;
+pub use self::thread_pool::current_thread_has_pending_tasks;
+pub use self::join::{join, join_context};
+pub use self::scope::{scope, Scope};
+pub use self::spawn::spawn;
 
 /// Returns the number of threads in the current registry. If this
 /// code is executing within a Rayon thread-pool, then this will be
@@ -85,7 +79,7 @@ pub use spawn::spawn;
 ///
 /// [snt]: struct.ThreadPoolBuilder.html#method.num_threads
 pub fn current_num_threads() -> usize {
-    ::registry::Registry::current_num_threads()
+    crate::registry::Registry::current_num_threads()
 }
 
 /// Error when initializing a thread pool.
@@ -130,7 +124,7 @@ pub struct ThreadPoolBuilder {
     panic_handler: Option<Box<PanicHandler>>,
 
     /// Closure to compute the name of a thread.
-    get_thread_name: Option<Box<FnMut(usize) -> String>>,
+    get_thread_name: Option<Box<dyn FnMut(usize) -> String>>,
 
     /// The stack size for the created worker threads
     stack_size: Option<usize>,
@@ -158,17 +152,17 @@ pub struct Configuration {
 
 /// The type for a panic handling closure. Note that this same closure
 /// may be invoked multiple times in parallel.
-type PanicHandler = Fn(Box<Any + Send>) + Send + Sync;
+type PanicHandler = dyn Fn(Box<dyn Any + Send>) + Send + Sync;
 
 /// The type for a closure that gets invoked when a thread starts. The
 /// closure is passed the index of the thread on which it is invoked.
 /// Note that this same closure may be invoked multiple times in parallel.
-type StartHandler = Fn(usize) + Send + Sync;
+type StartHandler = dyn Fn(usize) + Send + Sync;
 
 /// The type for a closure that gets invoked when a thread exits. The
 /// closure is passed the index of the thread on which is is invoked.
 /// Note that this same closure may be invoked multiple times in parallel.
-type ExitHandler = Fn(usize) + Send + Sync;
+type ExitHandler = dyn Fn(usize) + Send + Sync;
 
 impl ThreadPoolBuilder {
     /// Creates and returns a valid rayon thread pool builder, but does not initialize it.
@@ -288,7 +282,7 @@ impl ThreadPoolBuilder {
     /// process. To prevent this, wrap the body of your panic handler
     /// in a call to `std::panic::catch_unwind()`.
     pub fn panic_handler<H>(mut self, panic_handler: H) -> ThreadPoolBuilder
-        where H: Fn(Box<Any + Send>) + Send + Sync + 'static
+        where H: Fn(Box<dyn Any + Send>) + Send + Sync + 'static
     {
         self.panic_handler = Some(Box::new(panic_handler));
         self
@@ -379,7 +373,7 @@ impl Configuration {
     }
 
     /// Deprecated in favor of `ThreadPoolBuilder::build`.
-    pub fn build(self) -> Result<ThreadPool, Box<Error + 'static>> {
+    pub fn build(self) -> Result<ThreadPool, Box<dyn Error + 'static>> {
         self.builder.build().map_err(|e| e.into())
     }
 
@@ -398,7 +392,7 @@ impl Configuration {
 
     /// Deprecated in favor of `ThreadPoolBuilder::panic_handler`.
     pub fn panic_handler<H>(mut self, panic_handler: H) -> Configuration
-        where H: Fn(Box<Any + Send>) + Send + Sync + 'static
+        where H: Fn(Box<dyn Any + Send>) + Send + Sync + 'static
     {
         self.builder = self.builder.panic_handler(panic_handler);
         self
@@ -454,7 +448,7 @@ impl Error for ThreadPoolBuildError {
 }
 
 impl fmt::Display for ThreadPoolBuildError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.kind {
             ErrorKind::IOError(ref e) => e.fmt(f),
             _ => self.description().fmt(f),
@@ -465,12 +459,12 @@ impl fmt::Display for ThreadPoolBuildError {
 /// Deprecated in favor of `ThreadPoolBuilder::build_global`.
 #[deprecated(note = "use `ThreadPoolBuilder::build_global`")]
 #[allow(deprecated)]
-pub fn initialize(config: Configuration) -> Result<(), Box<Error>> {
+pub fn initialize(config: Configuration) -> Result<(), Box<dyn Error>> {
     config.into_builder().build_global().map_err(|e| e.into())
 }
 
 impl fmt::Debug for ThreadPoolBuilder {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let ThreadPoolBuilder { ref num_threads, ref get_thread_name,
                                 ref panic_handler, ref stack_size,
                                 ref start_handler, ref exit_handler,
@@ -480,7 +474,7 @@ impl fmt::Debug for ThreadPoolBuilder {
         // output.
         struct ClosurePlaceholder;
         impl fmt::Debug for ClosurePlaceholder {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.write_str("<closure>")
             }
         }
@@ -503,7 +497,7 @@ impl fmt::Debug for ThreadPoolBuilder {
 
 #[allow(deprecated)]
 impl fmt::Debug for Configuration {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.builder.fmt(f)
     }
 }
