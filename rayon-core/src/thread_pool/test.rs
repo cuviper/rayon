@@ -270,21 +270,21 @@ fn spawn_fifo_order() {
 
 #[test]
 fn broadcast_global() {
-    let v = ::broadcast(|i| i);
+    let v = ::broadcast(|ctx| ctx.index());
     assert!(v.into_iter().eq(0..::current_num_threads()));
 }
 
 #[test]
 fn broadcast_pool() {
     let pool = ThreadPoolBuilder::new().num_threads(7).build().unwrap();
-    let v = pool.broadcast(|i| i);
+    let v = pool.broadcast(|ctx| ctx.index());
     assert!(v.into_iter().eq(0..7));
 }
 
 #[test]
 fn broadcast_self() {
     let pool = ThreadPoolBuilder::new().num_threads(7).build().unwrap();
-    let v = pool.install(|| ::broadcast(|i| i));
+    let v = pool.install(|| ::broadcast(|ctx| ctx.index()));
     assert!(v.into_iter().eq(0..7));
 }
 
@@ -328,9 +328,9 @@ fn broadcast_panic_one() {
     let count = AtomicUsize::new(0);
     let pool = ThreadPoolBuilder::new().num_threads(7).build().unwrap();
     let result = unwind::halt_unwinding(|| {
-        pool.broadcast(|i| {
+        pool.broadcast(|ctx| {
             count.fetch_add(1, Ordering::Relaxed);
-            if i == 3 {
+            if ctx.index() == 3 {
                 panic!("Hello, world!");
             }
         })
@@ -344,9 +344,9 @@ fn broadcast_panic_many() {
     let count = AtomicUsize::new(0);
     let pool = ThreadPoolBuilder::new().num_threads(7).build().unwrap();
     let result = unwind::halt_unwinding(|| {
-        pool.broadcast(|i| {
+        pool.broadcast(|ctx| {
             count.fetch_add(1, Ordering::Relaxed);
-            if i % 2 == 0 {
+            if ctx.index() % 2 == 0 {
                 panic!("Hello, world!");
             }
         })

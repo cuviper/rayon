@@ -8,6 +8,7 @@ use registry::{Registry, WorkerThread};
 use spawn;
 use std::error::Error;
 use std::fmt;
+use std::marker::PhantomData;
 use std::sync::Arc;
 #[allow(deprecated)]
 use Configuration;
@@ -152,8 +153,8 @@ impl ThreadPool {
     ///    fn main() {
     ///         let pool = rayon::ThreadPoolBuilder::new().num_threads(5).build().unwrap();
     ///
-    ///         // The argument is the index of each thread
-    ///         let v: Vec<usize> = pool.broadcast(|i| i * i);
+    ///         // The argument gives context, including the index of each thread.
+    ///         let v: Vec<usize> = pool.broadcast(|ctx| ctx.index() * ctx.index());
     ///         assert_eq!(v, &[0, 1, 4, 9, 16]);
     ///
     ///         // The closure can reference the local stack
@@ -164,10 +165,11 @@ impl ThreadPool {
     /// ```
     pub fn broadcast<OP, R>(&self, op: OP) -> Vec<R>
     where
-        OP: Fn(usize) -> R + Sync,
+        OP: Fn(&BroadcastContext) -> R + Sync,
         R: Send,
     {
-        self.registry.broadcast(|worker| op(worker.index()))
+        self.registry
+            .broadcast(|worker| op(&BroadcastContext::new(worker)))
     }
 
     /// Returns the (current) number of threads in the thread pool.
@@ -384,8 +386,53 @@ pub fn current_thread_has_pending_tasks() -> Option<bool> {
 /// [m]: struct.ThreadPool.html#method.broadcast
 pub fn broadcast<OP, R>(op: OP) -> Vec<R>
 where
-    OP: Fn(usize) -> R + Sync,
+    OP: Fn(&BroadcastContext) -> R + Sync,
     R: Send,
 {
-    Registry::current().broadcast(|worker| op(worker.index()))
+    Registry::current().broadcast(|worker| op(&BroadcastContext::new(worker)))
+}
+
+/// Provides context to a closure called by `broadcast`.
+pub struct BroadcastContext<'a> {
+    worker: &'a WorkerThread,
+
+    /// Make sure to prevent auto-traits like `Send` and `Sync`.
+    _marker: PhantomData<&'a mut Fn()>,
+}
+
+impl<'a> BroadcastContext<'a> {
+    fn new(worker: &WorkerThread) -> BroadcastContext {
+        BroadcastContext {
+            worker,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Our index amongst the broadcast threads (ranges from `0..self.num_threads()`).
+    #[inline]
+    pub fn index(&self) -> usize {
+        self.worker.index()
+    }
+
+    /// The number of threads receiving the broadcast in the thread pool.
+    ///
+    /// # Future compatibility note
+    ///
+    /// Future versions of Rayon might vary the number of threads over time, but
+    /// this method will always return the number of threads which are actually
+    /// receiving your particular `broadcast` call.
+    #[inline]
+    pub fn num_threads(&self) -> usize {
+        self.worker.registry().num_threads()
+    }
+}
+
+impl<'a> fmt::Debug for BroadcastContext<'a> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("BroadcastContext")
+            .field("index", &self.index())
+            .field("num_threads", &self.num_threads())
+            .field("pool_id", &self.worker.registry().id())
+            .finish()
+    }
 }
