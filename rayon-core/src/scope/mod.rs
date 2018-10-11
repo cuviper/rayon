@@ -34,7 +34,8 @@ pub struct Scope<'scope> {
     /// thread registry where `scope()` was executed.
     registry: Arc<Registry>,
 
-    queue: ScopeQueue,
+    /// proxy for the different ways we may inject spawned jobs
+    injector: ScopeInjector,
 
     /// if some job panicked, the error is stored here; it will be
     /// propagated to the one who created the scope
@@ -264,13 +265,14 @@ pub fn scope<'scope, OP, R>(op: OP) -> R
 {
     in_worker(|owner_thread, _| {
         unsafe {
+            let registry = owner_thread.registry();
             let scope: Scope<'scope> = Scope {
                 owner_thread_index: owner_thread.index(),
-                registry: owner_thread.registry().clone(),
+                registry: registry.clone(),
+                injector: ScopeInjector::new_threaded(registry.num_threads()),
                 panic: AtomicPtr::new(ptr::null_mut()),
                 job_completed_latch: CountLatch::new(),
                 marker: PhantomData,
-                queue: ScopeQueue::new(),
             };
             let result = scope.execute_job_closure(op);
             scope.steal_till_jobs_complete(owner_thread);
@@ -338,9 +340,7 @@ impl<'scope> Scope<'scope> {
         unsafe {
             self.job_completed_latch.increment();
             let job = Box::new(HeapJob::new(move || self.execute_job(body)));
-
-            // Use our private queue to execute in FIFO order.
-            self.queue.inject(&self.registry, job.as_job_ref());
+            self.injector.inject(&self.registry, job.as_job_ref());
         }
     }
 
@@ -417,6 +417,44 @@ impl<'scope> fmt::Debug for Scope<'scope> {
     }
 }
 
+#[allow(dead_code)]
+enum ScopeInjector {
+    Direct,
+    GlobalFifo(ScopeQueue),
+    ThreadFifo(Vec<ScopeQueue>),
+}
+
+impl ScopeInjector {
+    fn new_threaded(num_threads: usize) -> Self {
+        let queues = (0..num_threads).map(|_| ScopeQueue::new()).collect();
+        ScopeInjector::ThreadFifo(queues)
+    }
+
+    unsafe fn inject(&self, registry: &Registry, job_ref: JobRef) {
+        match *self {
+            ScopeInjector::Direct => {
+                // Push the job into the thread pool without any indirection.
+                registry.inject_or_push(job_ref)
+            },
+            ScopeInjector::GlobalFifo(ref queue) => {
+                // Use our scope's private queue to execute in FIFO order.
+                queue.inject(registry, job_ref)
+            },
+            ScopeInjector::ThreadFifo(ref queues) => {
+                // If we're in the pool, use our scope's private queue for this thread to execute
+                // in a locally-FIFO order.  Otherwise, just use the pool's global injector.
+                match registry.current_thread() {
+                    Some(worker) => {
+                        let queue = &queues[worker.index()];
+                        queue.push(worker, job_ref);
+                    }
+                    _ => registry.inject(&[job_ref]),
+                }
+            }
+        }
+    }
+}
+
 /// Private queue to provide FIFO job priority.
 struct ScopeQueue {
     inner: SegQueue<JobRef>,
@@ -438,6 +476,12 @@ impl ScopeQueue {
         // Since `Scope` implements `Sync`, we can't be sure that we're still in a thread of this
         // pool, so we can't just push to the local worker thread.
         registry.inject_or_push(JobRef::new(self));
+    }
+
+    unsafe fn push(&self, worker: &WorkerThread, job_ref: JobRef) {
+        // Same indirection as `inject`, but on a specific thread.
+        self.inner.push(job_ref);
+        worker.push(JobRef::new(self));
     }
 }
 

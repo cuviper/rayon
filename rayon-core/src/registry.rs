@@ -165,6 +165,15 @@ impl Registry {
         }
     }
 
+    /// Returns the current `WorkerThread` if it's part of this `Registry`.
+    pub unsafe fn current_thread(&self) -> Option<&WorkerThread> {
+        if let Some(worker) = WorkerThread::current().as_ref() {
+            if worker.registry().id() == self.id() {
+                return Some(worker);
+            }
+        }
+        None
+    }
 
     /// Returns an opaque identifier for this registry.
     pub fn id(&self) -> RegistryId {
