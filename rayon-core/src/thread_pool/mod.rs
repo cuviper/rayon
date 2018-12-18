@@ -363,6 +363,12 @@ impl ThreadPool {
         let curr = self.registry.current_thread()?;
         Some(curr.yield_local())
     }
+
+    pub(crate) fn wait_until_stopped(self) {
+        let registry = self.registry.clone();
+        drop(self);
+        registry.wait_until_stopped();
+    }
 }
 
 impl Drop for ThreadPool {
