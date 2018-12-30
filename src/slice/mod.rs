@@ -441,6 +441,36 @@ impl<'data, T: Send + 'data> IntoParallelIterator for &'data mut Vec<T> {
     }
 }
 
+macro_rules! array_impls {
+    ($( $N:tt, )+) => {
+        $(
+            impl<'data, T: Sync + 'data> IntoParallelIterator for &'data [T; $N] {
+                type Item = &'data T;
+                type Iter = Iter<'data, T>;
+
+                fn into_par_iter(self) -> Self::Iter {
+                    Iter { slice: self }
+                }
+            }
+
+            impl<'data, T: Send + 'data> IntoParallelIterator for &'data mut [T; $N] {
+                type Item = &'data mut T;
+                type Iter = IterMut<'data, T>;
+
+                fn into_par_iter(self) -> Self::Iter {
+                    IterMut { slice: self }
+                }
+            }
+        )+
+    }
+}
+array_impls! {
+    0, 1, 2, 3, 4, 5, 6, 7, 8,
+    9, 10, 11, 12, 13, 14, 15, 16,
+    17, 18, 19, 20, 21, 22, 23, 24,
+    25, 26, 27, 28, 29, 30, 31, 32,
+}
+
 /// Parallel iterator over immutable items in a slice
 #[derive(Debug)]
 pub struct Iter<'data, T: 'data + Sync> {
