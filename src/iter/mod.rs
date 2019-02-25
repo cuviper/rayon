@@ -67,14 +67,14 @@
 //! [split]: fn.split.html
 //! [plumbing]: plumbing/index.html
 //!
-//! Note: Several of the `ParallelIterator` methods rely on a `Try` trait which
+//! Note: Several of the `ParallelIterator` methods rely on a `Bubble` trait which
 //! has been deliberately obscured from the public API.  This trait is intended
-//! to mirror the unstable `std::ops::Try` with implementations for `Option` and
+//! to mirror the unstable `std::ops::Bubble` with implementations for `Option` and
 //! `Result`, where `Some`/`Ok` values will let those iterators continue, but
 //! `None`/`Err` values will exit early.
 
 use self::plumbing::*;
-use self::private::Try;
+use self::private::Bubble;
 pub use either::Either;
 use std::cmp::{self, Ordering};
 use std::iter::{Product, Sum};
@@ -438,9 +438,9 @@ pub trait ParallelIterator: Sized + Send {
     fn try_for_each<OP, R>(self, op: OP) -> R
     where
         OP: Fn(Self::Item) -> R + Sync + Send,
-        R: Try<Ok = ()> + Send,
+        R: Bubble<Inner = ()> + Send,
     {
-        self.map(op).try_reduce(|| (), |(), ()| R::from_ok(()))
+        self.map(op).try_reduce(|| (), |(), ()| R::done(()))
     }
 
     /// Executes a fallible `OP` on the given `init` value with each item
@@ -474,10 +474,10 @@ pub trait ParallelIterator: Sized + Send {
     where
         OP: Fn(&mut T, Self::Item) -> R + Sync + Send,
         T: Send + Clone,
-        R: Try<Ok = ()> + Send,
+        R: Bubble<Inner = ()> + Send,
     {
         self.map_with(init, op)
-            .try_reduce(|| (), |(), ()| R::from_ok(()))
+            .try_reduce(|| (), |(), ()| R::done(()))
     }
 
     /// Executes a fallible `OP` on a value returned by `init` with each item
@@ -516,10 +516,10 @@ pub trait ParallelIterator: Sized + Send {
     where
         OP: Fn(&mut T, Self::Item) -> R + Sync + Send,
         INIT: Fn() -> T + Sync + Send,
-        R: Try<Ok = ()> + Send,
+        R: Bubble<Inner = ()> + Send,
     {
         self.map_init(init, op)
-            .try_reduce(|| (), |(), ()| R::from_ok(()))
+            .try_reduce(|| (), |(), ()| R::done(()))
     }
 
     /// Counts the number of items in this parallel iterator.
@@ -929,7 +929,7 @@ pub trait ParallelIterator: Sized + Send {
     where
         OP: Fn(T, T) -> Self::Item + Sync + Send,
         ID: Fn() -> T + Sync + Send,
-        Self::Item: Try<Ok = T>,
+        Self::Item: Bubble<Inner = T>,
     {
         try_reduce::try_reduce(self, identity, op)
     }
@@ -972,7 +972,7 @@ pub trait ParallelIterator: Sized + Send {
     fn try_reduce_with<T, OP>(self, op: OP) -> Option<Self::Item>
     where
         OP: Fn(T, T) -> Self::Item + Sync + Send,
-        Self::Item: Try<Ok = T>,
+        Self::Item: Bubble<Inner = T>,
     {
         try_reduce_with::try_reduce_with(self, op)
     }
@@ -1175,7 +1175,7 @@ pub trait ParallelIterator: Sized + Send {
     where
         F: Fn(T, Self::Item) -> R + Sync + Send,
         ID: Fn() -> T + Sync + Send,
-        R: Try<Ok = T> + Send,
+        R: Bubble<Inner = T> + Send,
     {
         try_fold::try_fold(self, identity, fold_op)
     }
@@ -1201,7 +1201,7 @@ pub trait ParallelIterator: Sized + Send {
     fn try_fold_with<F, T, R>(self, init: T, fold_op: F) -> TryFoldWith<Self, R, F>
     where
         F: Fn(T, Self::Item) -> R + Sync + Send,
-        R: Try<Ok = T> + Send,
+        R: Bubble<Inner = T> + Send,
         T: Clone + Send,
     {
         try_fold::try_fold_with(self, init, fold_op)
@@ -2651,53 +2651,87 @@ where
         I: IntoParallelIterator<Item = T>;
 }
 
-/// We hide the `Try` trait in a private module, as it's only meant to be a
-/// stable clone of the standard library's `Try` trait, as yet unstable.
+/// We hide the try-related items in a private module, as they're only meant
+/// to be stable clones of the standard library's items, as yet unstable.
 mod private {
-    /// Clone of `std::ops::Try`.
+    /// Clone of `std::ops::ControlFlow`.
+    #[derive(Debug)]
+    pub enum ControlFlow<C, B> {
+        Continue(C),
+        Break(B),
+    }
+
+    impl<R: TryBlock> ControlFlow<R::Inner, R> {
+        pub fn unbubble(self) -> R {
+            match self {
+                ControlFlow::Continue(x) => R::done(x),
+                ControlFlow::Break(x) => x,
+            }
+        }
+    }
+
+    /// Clone of `std::ops::TryBlock`.
     ///
     /// Implementing this trait is not permitted outside of `rayon`.
-    pub trait Try {
+    pub trait TryBlock {
         private_decl! {}
 
-        type Ok;
-        type Error;
-        fn into_result(self) -> Result<Self::Ok, Self::Error>;
-        fn from_ok(v: Self::Ok) -> Self;
-        fn from_error(v: Self::Error) -> Self;
+        type Inner;
+
+        fn done(inner: Self::Inner) -> Self;
     }
 
-    impl<T> Try for Option<T> {
+    /// Clone of `std::ops::Bubble`.
+    ///
+    /// Implementing this trait is not permitted outside of `rayon`.
+    pub trait Bubble<Other: Bubble = Self>: TryBlock {
+        private_decl! {}
+
+        fn bubble(self) -> ControlFlow<Self::Inner, Other>;
+    }
+
+    impl<T> TryBlock for Option<T> {
         private_impl! {}
 
-        type Ok = T;
-        type Error = ();
+        type Inner = T;
 
-        fn into_result(self) -> Result<T, ()> {
-            self.ok_or(())
-        }
-        fn from_ok(v: T) -> Self {
-            Some(v)
-        }
-        fn from_error(_: ()) -> Self {
-            None
+        fn done(x: T) -> Self {
+            Some(x)
         }
     }
 
-    impl<T, E> Try for Result<T, E> {
+    impl<T, U> Bubble<Option<U>> for Option<T> {
         private_impl! {}
 
-        type Ok = T;
-        type Error = E;
+        fn bubble(self) -> ControlFlow<T, Option<U>> {
+            match self {
+                Some(x) => ControlFlow::Continue(x),
+                None => ControlFlow::Break(None),
+            }
+        }
+    }
 
-        fn into_result(self) -> Result<T, E> {
-            self
+    impl<T, E> TryBlock for Result<T, E> {
+        private_impl! {}
+
+        type Inner = T;
+
+        fn done(x: T) -> Self {
+            Ok(x)
         }
-        fn from_ok(v: T) -> Self {
-            Ok(v)
-        }
-        fn from_error(v: E) -> Self {
-            Err(v)
+    }
+
+    impl<T, U, E, F> Bubble<Result<U, F>> for Result<T, E>
+    where
+        F: From<E>,
+    {
+        private_impl! {}
+
+        fn bubble(self) -> ControlFlow<T, Result<U, F>> {
+            match self {
+                Ok(x) => ControlFlow::Continue(x),
+                Err(e) => ControlFlow::Break(Err(F::from(e))),
+            }
         }
     }
 }

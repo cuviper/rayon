@@ -1,15 +1,16 @@
 use super::plumbing::*;
+use super::private::ControlFlow::*;
+use super::private::{Bubble, ControlFlow};
 use super::ParallelIterator;
 
-use super::private::Try;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub fn try_reduce<PI, R, ID, T>(pi: PI, identity: ID, reduce_op: R) -> T
 where
     PI: ParallelIterator<Item = T>,
-    R: Fn(T::Ok, T::Ok) -> T + Sync,
-    ID: Fn() -> T::Ok + Sync,
-    T: Try + Send,
+    R: Fn(T::Inner, T::Inner) -> T + Sync,
+    ID: Fn() -> T::Inner + Sync,
+    T: Bubble + Send,
 {
     let full = AtomicBool::new(false);
     let consumer = TryReduceConsumer {
@@ -36,9 +37,9 @@ impl<'r, R, ID> Clone for TryReduceConsumer<'r, R, ID> {
 
 impl<'r, R, ID, T> Consumer<T> for TryReduceConsumer<'r, R, ID>
 where
-    R: Fn(T::Ok, T::Ok) -> T + Sync,
-    ID: Fn() -> T::Ok + Sync,
-    T: Try + Send,
+    R: Fn(T::Inner, T::Inner) -> T + Sync,
+    ID: Fn() -> T::Inner + Sync,
+    T: Bubble + Send,
 {
     type Folder = TryReduceFolder<'r, R, T>;
     type Reducer = Self;
@@ -51,7 +52,7 @@ where
     fn into_folder(self) -> Self::Folder {
         TryReduceFolder {
             reduce_op: self.reduce_op,
-            result: Ok((self.identity)()),
+            control_flow: Continue((self.identity)()),
             full: self.full,
         }
     }
@@ -63,9 +64,9 @@ where
 
 impl<'r, R, ID, T> UnindexedConsumer<T> for TryReduceConsumer<'r, R, ID>
 where
-    R: Fn(T::Ok, T::Ok) -> T + Sync,
-    ID: Fn() -> T::Ok + Sync,
-    T: Try + Send,
+    R: Fn(T::Inner, T::Inner) -> T + Sync,
+    ID: Fn() -> T::Inner + Sync,
+    T: Bubble + Send,
 {
     fn split_off_left(&self) -> Self {
         *self
@@ -78,49 +79,54 @@ where
 
 impl<'r, R, ID, T> Reducer<T> for TryReduceConsumer<'r, R, ID>
 where
-    R: Fn(T::Ok, T::Ok) -> T + Sync,
-    T: Try,
+    R: Fn(T::Inner, T::Inner) -> T + Sync,
+    T: Bubble,
 {
     fn reduce(self, left: T, right: T) -> T {
-        match (left.into_result(), right.into_result()) {
-            (Ok(left), Ok(right)) => (self.reduce_op)(left, right),
-            (Err(e), _) | (_, Err(e)) => T::from_error(e),
+        let reduce_op = self.reduce_op;
+        match left.bubble() {
+            Continue(left) => match right.bubble() {
+                Continue(right) => reduce_op(left, right),
+                Break(right) => right,
+            },
+            Break(left) => left,
         }
     }
 }
 
-struct TryReduceFolder<'r, R: 'r, T: Try> {
+struct TryReduceFolder<'r, R: 'r, T: Bubble> {
     reduce_op: &'r R,
-    result: Result<T::Ok, T::Error>,
+    control_flow: ControlFlow<T::Inner, T>,
     full: &'r AtomicBool,
 }
 
 impl<'r, R, T> Folder<T> for TryReduceFolder<'r, R, T>
 where
-    R: Fn(T::Ok, T::Ok) -> T,
-    T: Try,
+    R: Fn(T::Inner, T::Inner) -> T,
+    T: Bubble,
 {
     type Result = T;
 
     fn consume(self, item: T) -> Self {
         let reduce_op = self.reduce_op;
-        let result = self
-            .result
-            .and_then(|left| reduce_op(left, item.into_result()?).into_result());
-        if result.is_err() {
+        let control_flow = match self.control_flow {
+            Continue(left) => match item.bubble() {
+                Continue(right) => reduce_op(left, right).bubble(),
+                Break(right) => Break(right),
+            },
+            Break(left) => Break(left),
+        };
+        if let Break(_) = control_flow {
             self.full.store(true, Ordering::Relaxed)
         }
         TryReduceFolder {
-            result: result,
+            control_flow: control_flow,
             ..self
         }
     }
 
     fn complete(self) -> T {
-        match self.result {
-            Ok(ok) => T::from_ok(ok),
-            Err(error) => T::from_error(error),
-        }
+        self.control_flow.unbubble()
     }
 
     fn full(&self) -> bool {

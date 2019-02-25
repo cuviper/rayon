@@ -1,14 +1,15 @@
 use super::plumbing::*;
+use super::private::ControlFlow::*;
+use super::private::{Bubble, ControlFlow};
 use super::ParallelIterator;
 
-use super::private::Try;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub fn try_reduce_with<PI, R, T>(pi: PI, reduce_op: R) -> Option<T>
 where
     PI: ParallelIterator<Item = T>,
-    R: Fn(T::Ok, T::Ok) -> T + Sync,
-    T: Try + Send,
+    R: Fn(T::Inner, T::Inner) -> T + Sync,
+    T: Bubble + Send,
 {
     let full = AtomicBool::new(false);
     let consumer = TryReduceWithConsumer {
@@ -33,8 +34,8 @@ impl<'r, R> Clone for TryReduceWithConsumer<'r, R> {
 
 impl<'r, R, T> Consumer<T> for TryReduceWithConsumer<'r, R>
 where
-    R: Fn(T::Ok, T::Ok) -> T + Sync,
-    T: Try + Send,
+    R: Fn(T::Inner, T::Inner) -> T + Sync,
+    T: Bubble + Send,
 {
     type Folder = TryReduceWithFolder<'r, R, T>;
     type Reducer = Self;
@@ -47,7 +48,7 @@ where
     fn into_folder(self) -> Self::Folder {
         TryReduceWithFolder {
             reduce_op: self.reduce_op,
-            opt_result: None,
+            opt_control_flow: None,
             full: self.full,
         }
     }
@@ -59,8 +60,8 @@ where
 
 impl<'r, R, T> UnindexedConsumer<T> for TryReduceWithConsumer<'r, R>
 where
-    R: Fn(T::Ok, T::Ok) -> T + Sync,
-    T: Try + Send,
+    R: Fn(T::Inner, T::Inner) -> T + Sync,
+    T: Bubble + Send,
 {
     fn split_off_left(&self) -> Self {
         *self
@@ -73,58 +74,58 @@ where
 
 impl<'r, R, T> Reducer<Option<T>> for TryReduceWithConsumer<'r, R>
 where
-    R: Fn(T::Ok, T::Ok) -> T + Sync,
-    T: Try,
+    R: Fn(T::Inner, T::Inner) -> T + Sync,
+    T: Bubble,
 {
     fn reduce(self, left: Option<T>, right: Option<T>) -> Option<T> {
         let reduce_op = self.reduce_op;
         match (left, right) {
-            (None, x) | (x, None) => x,
-            (Some(a), Some(b)) => match (a.into_result(), b.into_result()) {
-                (Ok(a), Ok(b)) => Some(reduce_op(a, b)),
-                (Err(e), _) | (_, Err(e)) => Some(T::from_error(e)),
+            (Some(left), Some(right)) => match left.bubble() {
+                Continue(left) => match right.bubble() {
+                    Continue(right) => Some(reduce_op(left, right)),
+                    Break(right) => Some(right),
+                },
+                Break(left) => Some(left),
             },
+            (None, value) | (value, None) => value,
         }
     }
 }
 
-struct TryReduceWithFolder<'r, R: 'r, T: Try> {
+struct TryReduceWithFolder<'r, R: 'r, T: Bubble> {
     reduce_op: &'r R,
-    opt_result: Option<Result<T::Ok, T::Error>>,
+    opt_control_flow: Option<ControlFlow<T::Inner, T>>,
     full: &'r AtomicBool,
 }
 
 impl<'r, R, T> Folder<T> for TryReduceWithFolder<'r, R, T>
 where
-    R: Fn(T::Ok, T::Ok) -> T,
-    T: Try,
+    R: Fn(T::Inner, T::Inner) -> T,
+    T: Bubble,
 {
     type Result = Option<T>;
 
     fn consume(self, item: T) -> Self {
         let reduce_op = self.reduce_op;
-        let result = match self.opt_result {
-            None => item.into_result(),
-            Some(Ok(a)) => match item.into_result() {
-                Ok(b) => reduce_op(a, b).into_result(),
-                Err(e) => Err(e),
+        let control_flow = match self.opt_control_flow {
+            Some(Continue(left)) => match item.bubble() {
+                Continue(right) => reduce_op(left, right).bubble(),
+                Break(right) => Break(right),
             },
-            Some(Err(e)) => Err(e),
+            Some(Break(left)) => Break(left),
+            None => item.bubble(),
         };
-        if result.is_err() {
+        if let Break(_) = control_flow {
             self.full.store(true, Ordering::Relaxed)
         }
         TryReduceWithFolder {
-            opt_result: Some(result),
+            opt_control_flow: Some(control_flow),
             ..self
         }
     }
 
     fn complete(self) -> Option<T> {
-        self.opt_result.map(|result| match result {
-            Ok(ok) => T::from_ok(ok),
-            Err(error) => T::from_error(error),
-        })
+        self.opt_control_flow.map(ControlFlow::unbubble)
     }
 
     fn full(&self) -> bool {

@@ -1,16 +1,17 @@
 use super::plumbing::*;
+use super::private::ControlFlow::*;
+use super::private::{Bubble, ControlFlow};
 use super::*;
 
-use super::private::Try;
 use std::fmt::{self, Debug};
 use std::marker::PhantomData;
 
 pub fn try_fold<U, I, ID, F>(base: I, identity: ID, fold_op: F) -> TryFold<I, U, ID, F>
 where
     I: ParallelIterator,
-    F: Fn(U::Ok, I::Item) -> U + Sync + Send,
-    ID: Fn() -> U::Ok + Sync + Send,
-    U: Try + Send,
+    F: Fn(U::Inner, I::Item) -> U + Sync + Send,
+    ID: Fn() -> U::Inner + Sync + Send,
+    U: Bubble + Send,
 {
     TryFold {
         base: base,
@@ -43,9 +44,9 @@ impl<U, I: ParallelIterator + Debug, ID, F> Debug for TryFold<I, U, ID, F> {
 impl<U, I, ID, F> ParallelIterator for TryFold<I, U, ID, F>
 where
     I: ParallelIterator,
-    F: Fn(U::Ok, I::Item) -> U + Sync + Send,
-    ID: Fn() -> U::Ok + Sync + Send,
-    U: Try + Send,
+    F: Fn(U::Inner, I::Item) -> U + Sync + Send,
+    ID: Fn() -> U::Inner + Sync + Send,
+    U: Bubble + Send,
 {
     type Item = U;
 
@@ -73,9 +74,9 @@ struct TryFoldConsumer<'c, U, C, ID: 'c, F: 'c> {
 impl<'r, U, T, C, ID, F> Consumer<T> for TryFoldConsumer<'r, U, C, ID, F>
 where
     C: Consumer<U>,
-    F: Fn(U::Ok, T) -> U + Sync,
-    ID: Fn() -> U::Ok + Sync,
-    U: Try + Send,
+    F: Fn(U::Inner, T) -> U + Sync,
+    ID: Fn() -> U::Inner + Sync,
+    U: Bubble + Send,
 {
     type Folder = TryFoldFolder<'r, C::Folder, U, F>;
     type Reducer = C::Reducer;
@@ -96,7 +97,7 @@ where
     fn into_folder(self) -> Self::Folder {
         TryFoldFolder {
             base: self.base.into_folder(),
-            result: Ok((self.identity)()),
+            control_flow: Continue((self.identity)()),
             fold_op: self.fold_op,
         }
     }
@@ -109,9 +110,9 @@ where
 impl<'r, U, T, C, ID, F> UnindexedConsumer<T> for TryFoldConsumer<'r, U, C, ID, F>
 where
     C: UnindexedConsumer<U>,
-    F: Fn(U::Ok, T) -> U + Sync,
-    ID: Fn() -> U::Ok + Sync,
-    U: Try + Send,
+    F: Fn(U::Inner, T) -> U + Sync,
+    ID: Fn() -> U::Inner + Sync,
+    U: Bubble + Send,
 {
     fn split_off_left(&self) -> Self {
         TryFoldConsumer {
@@ -125,50 +126,53 @@ where
     }
 }
 
-struct TryFoldFolder<'r, C, U: Try, F: 'r> {
+struct TryFoldFolder<'r, C, U: Bubble, F: 'r> {
     base: C,
     fold_op: &'r F,
-    result: Result<U::Ok, U::Error>,
+    control_flow: ControlFlow<U::Inner, U>,
 }
 
 impl<'r, C, U, F, T> Folder<T> for TryFoldFolder<'r, C, U, F>
 where
     C: Folder<U>,
-    F: Fn(U::Ok, T) -> U + Sync,
-    U: Try,
+    F: Fn(U::Inner, T) -> U + Sync,
+    U: Bubble,
 {
     type Result = C::Result;
 
     fn consume(self, item: T) -> Self {
         let fold_op = self.fold_op;
-        let result = self.result.and_then(|acc| fold_op(acc, item).into_result());
+        let control_flow = match self.control_flow {
+            Continue(acc) => fold_op(acc, item).bubble(),
+            Break(value) => Break(value),
+        };
         TryFoldFolder {
-            result: result,
+            control_flow: control_flow,
             ..self
         }
     }
 
     fn complete(self) -> C::Result {
-        let item = match self.result {
-            Ok(ok) => U::from_ok(ok),
-            Err(error) => U::from_error(error),
-        };
+        let item = self.control_flow.unbubble();
         self.base.consume(item).complete()
     }
 
     fn full(&self) -> bool {
-        self.result.is_err() || self.base.full()
+        match self.control_flow {
+            Break(_) => true,
+            _ => self.base.full(),
+        }
     }
 }
 
 // ///////////////////////////////////////////////////////////////////////////
 
-pub fn try_fold_with<U, I, F>(base: I, item: U::Ok, fold_op: F) -> TryFoldWith<I, U, F>
+pub fn try_fold_with<U, I, F>(base: I, item: U::Inner, fold_op: F) -> TryFoldWith<I, U, F>
 where
     I: ParallelIterator,
-    F: Fn(U::Ok, I::Item) -> U + Sync,
-    U: Try + Send,
-    U::Ok: Clone + Send,
+    F: Fn(U::Inner, I::Item) -> U + Sync,
+    U: Bubble + Send,
+    U::Inner: Clone + Send,
 {
     TryFoldWith {
         base: base,
@@ -184,15 +188,15 @@ where
 /// [`ParallelIterator`]: trait.ParallelIterator.html
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
 #[derive(Clone)]
-pub struct TryFoldWith<I, U: Try, F> {
+pub struct TryFoldWith<I, U: Bubble, F> {
     base: I,
-    item: U::Ok,
+    item: U::Inner,
     fold_op: F,
 }
 
-impl<I: ParallelIterator + Debug, U: Try, F> Debug for TryFoldWith<I, U, F>
+impl<I: ParallelIterator + Debug, U: Bubble, F> Debug for TryFoldWith<I, U, F>
 where
-    U::Ok: Debug,
+    U::Inner: Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("TryFoldWith")
@@ -205,9 +209,9 @@ where
 impl<U, I, F> ParallelIterator for TryFoldWith<I, U, F>
 where
     I: ParallelIterator,
-    F: Fn(U::Ok, I::Item) -> U + Sync + Send,
-    U: Try + Send,
-    U::Ok: Clone + Send,
+    F: Fn(U::Inner, I::Item) -> U + Sync + Send,
+    U: Bubble + Send,
+    U::Inner: Clone + Send,
 {
     type Item = U;
 
@@ -224,18 +228,18 @@ where
     }
 }
 
-struct TryFoldWithConsumer<'c, C, U: Try, F: 'c> {
+struct TryFoldWithConsumer<'c, C, U: Bubble, F: 'c> {
     base: C,
-    item: U::Ok,
+    item: U::Inner,
     fold_op: &'c F,
 }
 
 impl<'r, U, T, C, F> Consumer<T> for TryFoldWithConsumer<'r, C, U, F>
 where
     C: Consumer<U>,
-    F: Fn(U::Ok, T) -> U + Sync,
-    U: Try + Send,
-    U::Ok: Clone + Send,
+    F: Fn(U::Inner, T) -> U + Sync,
+    U: Bubble + Send,
+    U::Inner: Clone + Send,
 {
     type Folder = TryFoldFolder<'r, C::Folder, U, F>;
     type Reducer = C::Reducer;
@@ -260,7 +264,7 @@ where
     fn into_folder(self) -> Self::Folder {
         TryFoldFolder {
             base: self.base.into_folder(),
-            result: Ok(self.item),
+            control_flow: Continue(self.item),
             fold_op: self.fold_op,
         }
     }
@@ -273,9 +277,9 @@ where
 impl<'r, U, T, C, F> UnindexedConsumer<T> for TryFoldWithConsumer<'r, C, U, F>
 where
     C: UnindexedConsumer<U>,
-    F: Fn(U::Ok, T) -> U + Sync,
-    U: Try + Send,
-    U::Ok: Clone + Send,
+    F: Fn(U::Inner, T) -> U + Sync,
+    U: Bubble + Send,
+    U::Inner: Clone + Send,
 {
     fn split_off_left(&self) -> Self {
         TryFoldWithConsumer {
