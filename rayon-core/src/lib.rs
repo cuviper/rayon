@@ -63,6 +63,7 @@ mod test;
 #[cfg(rayon_unstable)]
 pub mod internal;
 pub use join::{join, join_context};
+pub use registry::yield_now;
 pub use scope::{scope, Scope};
 pub use scope::{scope_fifo, ScopeFifo};
 pub use spawn::{spawn, spawn_fifo};

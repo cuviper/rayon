@@ -578,16 +578,7 @@ impl WorkerThread {
 
         let mut yields = 0;
         while !latch.probe() {
-            // Try to find some work to do. We give preference first
-            // to things in our local deque, then in other workers
-            // deques, and finally to injected jobs from the
-            // outside. The idea is to finish what we started before
-            // we take on something new.
-            if let Some(job) = self
-                .take_local_job()
-                .or_else(|| self.steal())
-                .or_else(|| self.registry.pop_injected_job(self.index))
-            {
+            if let Some(job) = self.find_work() {
                 yields = self.registry.sleep.work_found(self.index, yields);
                 self.execute(job);
             } else {
@@ -602,6 +593,17 @@ impl WorkerThread {
 
         log!(LatchSet { worker: self.index });
         mem::forget(abort_guard); // successful execution, do not abort
+    }
+
+    unsafe fn find_work(&self) -> Option<JobRef> {
+        // Try to find some work to do. We give preference first
+        // to things in our local deque, then in other workers
+        // deques, and finally to injected jobs from the
+        // outside. The idea is to finish what we started before
+        // we take on something new.
+        self.take_local_job()
+            .or_else(|| self.steal())
+            .or_else(|| self.registry.pop_injected_job(self.index))
     }
 
     pub unsafe fn execute(&self, job: JobRef) {
@@ -734,6 +736,23 @@ where
             global_registry().in_worker_cold(op)
         }
     }
+}
+
+/// Yields execution to Rayon
+///
+/// If the current thread is part of a `rayon::ThreadPool`, it will look for
+/// pending work to execute in the pool. If it's not part of a pool or no work
+/// is found, it simply calls `std::thread::yield_now()`.
+pub fn yield_now() {
+    unsafe {
+        if let Some(thread) = WorkerThread::current().as_ref() {
+            if let Some(job) = thread.find_work() {
+                thread.execute(job);
+                return;
+            }
+        }
+    }
+    thread::yield_now();
 }
 
 /// [xorshift*] is a fast pseudorandom number generator which will
