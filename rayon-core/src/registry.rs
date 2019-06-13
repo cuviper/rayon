@@ -1,4 +1,4 @@
-use crossbeam_deque::{self as deque, Pop, Steal, Stealer, Worker};
+use crossbeam_deque::{Steal, Stealer, Worker};
 use crossbeam_queue::SegQueue;
 #[cfg(rayon_unstable)]
 use internal::task::Task;
@@ -222,15 +222,13 @@ impl Registry {
         let n_threads = builder.get_num_threads();
         let breadth_first = builder.get_breadth_first();
 
-        let (workers, stealers): (Vec<_>, Vec<_>) = (0..n_threads)
-            .map(|_| {
-                if breadth_first {
-                    deque::fifo()
-                } else {
-                    deque::lifo()
-                }
-            })
-            .unzip();
+        let new = if breadth_first {
+            Worker::new_fifo
+        } else {
+            Worker::new_lifo
+        };
+        let workers: Vec<_> = (0..n_threads).map(|_| new()).collect();
+        let stealers: Vec<_> = workers.iter().map(Worker::stealer).collect();
 
         let registry = Arc::new(Registry {
             thread_infos: stealers.into_iter().map(ThreadInfo::new).collect(),
@@ -674,13 +672,7 @@ impl WorkerThread {
     /// bottom.
     #[inline]
     pub(super) unsafe fn take_local_job(&self) -> Option<JobRef> {
-        loop {
-            match self.worker.pop() {
-                Pop::Empty => return None,
-                Pop::Data(d) => return Some(d),
-                Pop::Retry => {}
-            }
-        }
+        self.worker.pop()
     }
 
     /// Wait until the latch is set. Try to keep busy by popping and
@@ -763,7 +755,7 @@ impl WorkerThread {
                 loop {
                     match victim.stealer.steal() {
                         Steal::Empty => return None,
-                        Steal::Data(d) => {
+                        Steal::Success(d) => {
                             log!(StoleWork {
                                 worker: self.index,
                                 victim: victim_index
