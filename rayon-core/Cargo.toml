@@ -9,7 +9,6 @@ repository = "https://github.com/rust-lang/rustc-rayon"
 documentation = "https://docs.rs/rustc-rayon-core/"
 rust-version = "1.59"
 edition = "2021"
-links = "rayon-core"
 build = "build.rs"
 readme = "README.md"
 keywords = ["parallel", "thread", "concurrency", "join", "performance"]
