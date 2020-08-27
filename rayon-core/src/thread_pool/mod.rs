@@ -5,11 +5,11 @@
 
 use crate::join;
 use crate::registry::{Registry, ThreadSpawn, WorkerThread};
+use crate::scope::{raw_scope_fifo_in, ScopeFifo};
+use crate::scope::{raw_scope_in, Scope};
 use crate::spawn;
 #[allow(deprecated)]
 use crate::Configuration;
-use crate::{scope, Scope};
-use crate::{scope_fifo, ScopeFifo};
 use crate::{ThreadPoolBuildError, ThreadPoolBuilder};
 use std::error::Error;
 use std::fmt;
@@ -203,7 +203,15 @@ impl ThreadPool {
         OP: FnOnce(&Scope<'scope>) -> R + Send,
         R: Send,
     {
-        self.install(|| scope(op))
+        self.install(|| self.raw_scope(op))
+    }
+
+    /// TODO
+    pub fn raw_scope<'scope, OP, R>(&self, op: OP) -> R
+    where
+        OP: FnOnce(&Scope<'scope>) -> R,
+    {
+        raw_scope_in(self.registry.clone(), op)
     }
 
     /// Creates a scope that executes within this thread-pool.
@@ -218,7 +226,15 @@ impl ThreadPool {
         OP: FnOnce(&ScopeFifo<'scope>) -> R + Send,
         R: Send,
     {
-        self.install(|| scope_fifo(op))
+        self.install(|| self.raw_scope_fifo(op))
+    }
+
+    /// TODO
+    pub fn raw_scope_fifo<'scope, OP, R>(&self, op: OP) -> R
+    where
+        OP: FnOnce(&ScopeFifo<'scope>) -> R,
+    {
+        raw_scope_fifo_in(self.registry.clone(), op)
     }
 
     /// Spawns an asynchronous task in this thread-pool. This task will

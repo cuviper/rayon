@@ -5,7 +5,7 @@
 //! [`join()`]: ../join/join.fn.html
 
 use crate::job::{HeapJob, JobFifo};
-use crate::latch::CountLatch;
+use crate::latch::{CountLatch, CountLockLatch, Latch};
 use crate::registry::{in_worker, Registry, WorkerThread};
 use crate::unwind;
 use std::any::Any;
@@ -38,11 +38,6 @@ pub struct ScopeFifo<'scope> {
 }
 
 struct ScopeBase<'scope> {
-    /// thread where `scope()` was executed (note that individual jobs
-    /// may be executing on different worker threads, though they
-    /// should always be within the same pool of threads)
-    owner_thread_index: usize,
-
     /// thread registry where `scope()` was executed.
     registry: Arc<Registry>,
 
@@ -51,13 +46,27 @@ struct ScopeBase<'scope> {
     panic: AtomicPtr<Box<dyn Any + Send + 'static>>,
 
     /// latch to set when the counter drops to zero (and hence this scope is complete)
-    job_completed_latch: CountLatch,
+    job_completed_latch: ScopeLatch,
 
     /// You can think of a scope as containing a list of closures to execute,
     /// all of which outlive `'scope`.  They're not actually required to be
     /// `Sync`, but it's still safe to let the `Scope` implement `Sync` because
     /// the closures are only *moved* across threads to be executed.
     marker: PhantomData<Box<dyn FnOnce(&Scope<'scope>) + Send + Sync + 'scope>>,
+}
+
+enum ScopeLatch {
+    /// A latch for scopes created on a rayon thread which will participate in work-
+    /// stealing while it waits for completion. This thread is not necessarily part
+    /// of the same registry as the scope itself!
+    Stealing {
+        latch: CountLatch,
+        registry: Arc<Registry>,
+        worker_index: usize,
+    },
+
+    /// A latch for scopes created on a non-rayon thread which will block to wait.
+    Blocking { latch: CountLockLatch },
 }
 
 /// Creates a "fork-join" scope `s` and invokes the closure with a
@@ -288,10 +297,25 @@ where
     OP: FnOnce(&Scope<'scope>) -> R + Send,
     R: Send,
 {
-    in_worker(|owner_thread, _| {
-        let scope = Scope::<'scope>::new(owner_thread);
-        unsafe { scope.base.complete(owner_thread, || op(&scope)) }
-    })
+    in_worker(|_, _| raw_scope(op))
+}
+
+/// TODO
+pub fn raw_scope<'scope, OP, R>(op: OP) -> R
+where
+    OP: FnOnce(&Scope<'scope>) -> R,
+{
+    raw_scope_in(Registry::current(), op)
+}
+
+/// TODO
+pub(crate) fn raw_scope_in<'scope, OP, R>(registry: Arc<Registry>, op: OP) -> R
+where
+    OP: FnOnce(&Scope<'scope>) -> R,
+{
+    let owner = unsafe { WorkerThread::current().as_ref() };
+    let scope = &Scope::<'scope>::new(registry, owner);
+    scope.base.complete(owner, || op(&scope))
 }
 
 /// Creates a "fork-join" scope `s` with FIFO order, and invokes the
@@ -379,16 +403,31 @@ where
     OP: FnOnce(&ScopeFifo<'scope>) -> R + Send,
     R: Send,
 {
-    in_worker(|owner_thread, _| {
-        let scope = ScopeFifo::<'scope>::new(owner_thread);
-        unsafe { scope.base.complete(owner_thread, || op(&scope)) }
-    })
+    in_worker(|_, _| raw_scope_fifo(op))
+}
+
+/// TODO
+pub fn raw_scope_fifo<'scope, OP, R>(op: OP) -> R
+where
+    OP: FnOnce(&ScopeFifo<'scope>) -> R,
+{
+    raw_scope_fifo_in(Registry::current(), op)
+}
+
+/// TODO
+pub(crate) fn raw_scope_fifo_in<'scope, OP, R>(registry: Arc<Registry>, op: OP) -> R
+where
+    OP: FnOnce(&ScopeFifo<'scope>) -> R,
+{
+    let owner = unsafe { WorkerThread::current().as_ref() };
+    let scope = &ScopeFifo::<'scope>::new(registry, owner);
+    scope.base.complete(owner, || op(&scope))
 }
 
 impl<'scope> Scope<'scope> {
-    fn new(owner_thread: &WorkerThread) -> Self {
+    fn new(registry: Arc<Registry>, owner: Option<&WorkerThread>) -> Self {
         Scope {
-            base: ScopeBase::new(owner_thread),
+            base: ScopeBase::new(registry, owner),
         }
     }
 
@@ -463,10 +502,10 @@ impl<'scope> Scope<'scope> {
 }
 
 impl<'scope> ScopeFifo<'scope> {
-    fn new(owner_thread: &WorkerThread) -> Self {
-        let num_threads = owner_thread.registry().num_threads();
+    fn new(registry: Arc<Registry>, owner: Option<&WorkerThread>) -> Self {
+        let num_threads = registry.num_threads();
         ScopeFifo {
-            base: ScopeBase::new(owner_thread),
+            base: ScopeBase::new(registry, owner),
             fifos: (0..num_threads).map(|_| JobFifo::new()).collect(),
         }
     }
@@ -511,12 +550,11 @@ impl<'scope> ScopeFifo<'scope> {
 
 impl<'scope> ScopeBase<'scope> {
     /// Creates the base of a new scope for the given worker thread
-    fn new(owner_thread: &WorkerThread) -> Self {
+    fn new(registry: Arc<Registry>, owner: Option<&WorkerThread>) -> Self {
         ScopeBase {
-            owner_thread_index: owner_thread.index(),
-            registry: owner_thread.registry().clone(),
+            registry,
             panic: AtomicPtr::new(ptr::null_mut()),
-            job_completed_latch: CountLatch::new(),
+            job_completed_latch: ScopeLatch::new(owner),
             marker: PhantomData,
         }
     }
@@ -527,22 +565,18 @@ impl<'scope> ScopeBase<'scope> {
 
     /// Executes `func` as a job, either aborting or executing as
     /// appropriate.
-    ///
-    /// Unsafe because it must be executed on a worker thread.
-    unsafe fn complete<FUNC, R>(&self, owner_thread: &WorkerThread, func: FUNC) -> R
+    fn complete<FUNC, R>(&self, owner: Option<&WorkerThread>, func: FUNC) -> R
     where
         FUNC: FnOnce() -> R,
     {
         let result = self.execute_job_closure(func);
-        self.steal_till_jobs_complete(owner_thread);
+        self.wait_till_jobs_complete(owner);
         result.unwrap() // only None if `op` panicked, and that would have been propagated
     }
 
     /// Executes `func` as a job, either aborting or executing as
     /// appropriate.
-    ///
-    /// Unsafe because it must be executed on a worker thread.
-    unsafe fn execute_job<FUNC>(&self, func: FUNC)
+    fn execute_job<FUNC>(&self, func: FUNC)
     where
         FUNC: FnOnce(),
     {
@@ -552,9 +586,7 @@ impl<'scope> ScopeBase<'scope> {
     /// Executes `func` as a job in scope. Adjusts the "job completed"
     /// counters and also catches any panic and stores it into
     /// `scope`.
-    ///
-    /// Unsafe because this must be executed on a worker thread.
-    unsafe fn execute_job_closure<FUNC, R>(&self, func: FUNC) -> Option<R>
+    fn execute_job_closure<FUNC, R>(&self, func: FUNC) -> Option<R>
     where
         FUNC: FnOnce() -> R,
     {
@@ -570,7 +602,7 @@ impl<'scope> ScopeBase<'scope> {
         }
     }
 
-    unsafe fn job_panicked(&self, err: Box<dyn Any + Send + 'static>) {
+    fn job_panicked(&self, err: Box<dyn Any + Send + 'static>) {
         // capture the first error we see, free the rest
         let nil = ptr::null_mut();
         let mut err = Box::new(err); // box up the fat ptr
@@ -582,26 +614,75 @@ impl<'scope> ScopeBase<'scope> {
             mem::forget(err); // ownership now transferred into self.panic
         }
 
-        self.job_completed_latch
-            .set_and_tickle_one(&self.registry, self.owner_thread_index);
+        self.job_completed_latch.set()
     }
 
-    unsafe fn job_completed_ok(&self) {
-        self.job_completed_latch
-            .set_and_tickle_one(&self.registry, self.owner_thread_index);
+    fn job_completed_ok(&self) {
+        self.job_completed_latch.set()
     }
 
-    unsafe fn steal_till_jobs_complete(&self, owner_thread: &WorkerThread) {
-        // wait for job counter to reach 0:
-        owner_thread.wait_until(&self.job_completed_latch);
+    fn wait_till_jobs_complete(&self, owner: Option<&WorkerThread>) {
+        unsafe {
+            // wait for job counter to reach 0:
+            self.job_completed_latch.wait(owner);
 
-        // propagate panic, if any occurred; at this point, all
-        // outstanding jobs have completed, so we can use a relaxed
-        // ordering:
-        let panic = self.panic.swap(ptr::null_mut(), Ordering::Relaxed);
-        if !panic.is_null() {
-            let value: Box<Box<dyn Any + Send + 'static>> = mem::transmute(panic);
-            unwind::resume_unwinding(*value);
+            // propagate panic, if any occurred; at this point, all
+            // outstanding jobs have completed, so we can use a relaxed
+            // ordering:
+            let panic = self.panic.swap(ptr::null_mut(), Ordering::Relaxed);
+            if !panic.is_null() {
+                let value: Box<Box<dyn Any + Send + 'static>> = mem::transmute(panic);
+                unwind::resume_unwinding(*value);
+            }
+        }
+    }
+}
+
+impl ScopeLatch {
+    fn new(owner: Option<&WorkerThread>) -> Self {
+        match owner {
+            Some(owner) => Self::Stealing {
+                latch: CountLatch::new(),
+                registry: owner.registry().clone(),
+                worker_index: owner.index(),
+            },
+            None => Self::Blocking {
+                latch: CountLockLatch::new(),
+            },
+        }
+    }
+
+    fn increment(&self) {
+        match self {
+            ScopeLatch::Stealing { latch, .. } => latch.increment(),
+            ScopeLatch::Blocking { latch } => latch.increment(),
+        }
+    }
+
+    fn set(&self) {
+        match self {
+            ScopeLatch::Stealing {
+                latch,
+                registry,
+                worker_index,
+            } => latch.set_and_tickle_one(registry, *worker_index),
+            ScopeLatch::Blocking { latch } => latch.set(),
+        }
+    }
+
+    fn wait(&self, owner: Option<&WorkerThread>) {
+        match self {
+            ScopeLatch::Stealing {
+                latch,
+                registry,
+                worker_index,
+            } => unsafe {
+                let owner = owner.expect("owner thread");
+                debug_assert_eq!(registry.id(), owner.registry().id());
+                debug_assert_eq!(*worker_index, owner.index());
+                owner.wait_until(latch);
+            },
+            ScopeLatch::Blocking { latch } => latch.wait(),
         }
     }
 }
@@ -610,7 +691,6 @@ impl<'scope> fmt::Debug for Scope<'scope> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("Scope")
             .field("pool_id", &self.base.registry.id())
-            .field("owner_thread_index", &self.base.owner_thread_index)
             .field("panic", &self.base.panic)
             .field("job_completed_latch", &self.base.job_completed_latch)
             .finish()
@@ -622,9 +702,23 @@ impl<'scope> fmt::Debug for ScopeFifo<'scope> {
         fmt.debug_struct("ScopeFifo")
             .field("num_fifos", &self.fifos.len())
             .field("pool_id", &self.base.registry.id())
-            .field("owner_thread_index", &self.base.owner_thread_index)
             .field("panic", &self.base.panic)
             .field("job_completed_latch", &self.base.job_completed_latch)
             .finish()
+    }
+}
+
+impl fmt::Debug for ScopeLatch {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ScopeLatch::Stealing { latch, .. } => fmt
+                .debug_tuple("ScopeLatch::Stealing")
+                .field(latch)
+                .finish(),
+            ScopeLatch::Blocking { latch } => fmt
+                .debug_tuple("ScopeLatch::Blocking")
+                .field(latch)
+                .finish(),
+        }
     }
 }

@@ -218,6 +218,7 @@ impl<'r> Latch for SpinLatch<'r> {
 
 /// A Latch starts as false and eventually becomes true. You can block
 /// until it becomes true.
+#[derive(Debug)]
 pub(super) struct LockLatch {
     m: Mutex<bool>,
     v: Condvar,
@@ -325,6 +326,41 @@ impl AsCoreLatch for CountLatch {
     #[inline]
     fn as_core_latch(&self) -> &CoreLatch {
         &self.core_latch
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct CountLockLatch {
+    lock_latch: LockLatch,
+    counter: AtomicUsize,
+}
+
+impl CountLockLatch {
+    #[inline]
+    pub(super) fn new() -> CountLockLatch {
+        CountLockLatch {
+            lock_latch: LockLatch::new(),
+            counter: AtomicUsize::new(1),
+        }
+    }
+
+    #[inline]
+    pub(super) fn increment(&self) {
+        let old_counter = self.counter.fetch_add(1, Ordering::Relaxed);
+        debug_assert!(old_counter != 0);
+    }
+
+    pub(super) fn wait(&self) {
+        self.lock_latch.wait();
+    }
+}
+
+impl Latch for CountLockLatch {
+    #[inline]
+    fn set(&self) {
+        if self.counter.fetch_sub(1, Ordering::SeqCst) == 1 {
+            self.lock_latch.set();
+        }
     }
 }
 
