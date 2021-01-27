@@ -15,8 +15,10 @@ pub struct WorkerLocal<T> {
     registry: Arc<Registry>,
 }
 
-unsafe impl<T> Send for WorkerLocal<T> {}
-unsafe impl<T> Sync for WorkerLocal<T> {}
+/// We prevent concurrent access to the underlying value in the
+/// Deref impl, thus any values safe to send across threads can
+/// be used with WorkerLocal.
+unsafe impl<T: Send> Sync for WorkerLocal<T> {}
 
 impl<T> WorkerLocal<T> {
     /// Creates a new worker local where the `initial` closure computes the
@@ -60,7 +62,9 @@ impl<T> WorkerLocal<Vec<T>> {
 
 impl<T: fmt::Debug> fmt::Debug for WorkerLocal<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&self.locals, f)
+        f.debug_struct("WorkerLocal")
+            .field("registry", &self.registry.id())
+            .finish()
     }
 }
 
