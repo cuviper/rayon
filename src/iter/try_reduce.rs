@@ -2,8 +2,6 @@ use super::plumbing::*;
 use super::ParallelIterator;
 use super::Try;
 
-use super::private::ControlFlow::{self, Break, Continue};
-
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub(super) fn try_reduce<PI, R, ID, T>(pi: PI, identity: ID, reduce_op: R) -> T
@@ -53,7 +51,7 @@ where
     fn into_folder(self) -> Self::Folder {
         TryReduceFolder {
             reduce_op: self.reduce_op,
-            control: Continue((self.identity)()),
+            item: T::from_output((self.identity)()),
             full: self.full,
         }
     }
@@ -84,16 +82,13 @@ where
     T: Try,
 {
     fn reduce(self, left: T, right: T) -> T {
-        match (left.branch(), right.branch()) {
-            (Continue(left), Continue(right)) => (self.reduce_op)(left, right),
-            (Break(r), _) | (_, Break(r)) => T::from_residual(r),
-        }
+        (self.reduce_op)(left?, right?)
     }
 }
 
 struct TryReduceFolder<'r, R, T: Try> {
     reduce_op: &'r R,
-    control: ControlFlow<T::Residual, T::Output>,
+    item: T,
     full: &'r AtomicBool,
 }
 
@@ -104,29 +99,26 @@ where
 {
     type Result = T;
 
-    fn consume(mut self, item: T) -> Self {
+    fn consume(mut self, right: T) -> Self {
         let reduce_op = self.reduce_op;
-        self.control = match (self.control, item.branch()) {
-            (Continue(left), Continue(right)) => reduce_op(left, right).branch(),
-            (control @ Break(_), _) | (_, control @ Break(_)) => control,
-        };
-        if let Break(_) = self.control {
+        let mut is_output = false;
+        let left = self.item;
+        self.item = (|| {
+            let output = reduce_op(left?, right?)?;
+            is_output = true;
+            T::from_output(output)
+        })(); // TODO: try {}
+        if !is_output {
             self.full.store(true, Ordering::Relaxed);
         }
         self
     }
 
     fn complete(self) -> T {
-        match self.control {
-            Continue(c) => T::from_output(c),
-            Break(r) => T::from_residual(r),
-        }
+        self.item
     }
 
     fn full(&self) -> bool {
-        match self.control {
-            Break(_) => true,
-            _ => self.full.load(Ordering::Relaxed),
-        }
+        self.full.load(Ordering::Relaxed)
     }
 }

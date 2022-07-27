@@ -7,6 +7,7 @@
 #![allow(clippy::manual_strip)]
 // `mem::take` was only stabilized in 1.40
 #![allow(clippy::mem_replace_with_default)]
+#![feature(try_trait_v2)]
 
 //! Data-parallelism library that makes it easy to convert sequential
 //! computations into parallel

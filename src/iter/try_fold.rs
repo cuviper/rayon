@@ -2,8 +2,6 @@ use super::plumbing::*;
 use super::ParallelIterator;
 use super::Try;
 
-use super::private::ControlFlow::{self, Break, Continue};
-
 use std::fmt::{self, Debug};
 use std::marker::PhantomData;
 
@@ -100,8 +98,9 @@ where
     fn into_folder(self) -> Self::Folder {
         TryFoldFolder {
             base: self.base.into_folder(),
-            control: Continue((self.identity)()),
             fold_op: self.fold_op,
+            acc: U::from_output((self.identity)()),
+            is_output: true,
         }
     }
 
@@ -132,7 +131,8 @@ where
 struct TryFoldFolder<'r, C, U: Try, F> {
     base: C,
     fold_op: &'r F,
-    control: ControlFlow<U::Residual, U::Output>,
+    acc: U,
+    is_output: bool,
 }
 
 impl<'r, C, U, F, T> Folder<T> for TryFoldFolder<'r, C, U, F>
@@ -145,25 +145,23 @@ where
 
     fn consume(mut self, item: T) -> Self {
         let fold_op = self.fold_op;
-        if let Continue(acc) = self.control {
-            self.control = fold_op(acc, item).branch();
-        }
+        let mut is_output = false;
+        let acc = self.acc;
+        self.acc = (|| {
+            let output = fold_op(acc?, item)?;
+            is_output = true;
+            U::from_output(output)
+        })(); // TODO: try {}
+        self.is_output = is_output;
         self
     }
 
     fn complete(self) -> C::Result {
-        let item = match self.control {
-            Continue(c) => U::from_output(c),
-            Break(r) => U::from_residual(r),
-        };
-        self.base.consume(item).complete()
+        self.base.consume(self.acc).complete()
     }
 
     fn full(&self) -> bool {
-        match self.control {
-            Break(_) => true,
-            _ => self.base.full(),
-        }
+        !self.is_output || self.base.full()
     }
 }
 
@@ -268,8 +266,9 @@ where
     fn into_folder(self) -> Self::Folder {
         TryFoldFolder {
             base: self.base.into_folder(),
-            control: Continue(self.item),
             fold_op: self.fold_op,
+            acc: U::from_output(self.item),
+            is_output: true,
         }
     }
 
