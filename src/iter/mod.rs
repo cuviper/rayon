@@ -87,6 +87,14 @@ use std::ops::{Fn, RangeBounds, Try};
 
 pub mod plumbing;
 
+/// Try-wrapping without unstable `Try::from_output` or `try {}` blocks, by scottmcm:
+/// https://github.com/rust-lang/rust/issues/84277#issuecomment-1198497811
+macro_rules! try_from_output {
+    ($e:expr) => {
+        std::iter::empty::<std::convert::Infallible>().try_fold($e, |_, x| match x {})
+    };
+}
+
 #[cfg(test)]
 mod test;
 
@@ -459,7 +467,7 @@ pub trait ParallelIterator: Sized + Send {
         R: Try<Output = ()> + Send,
     {
         fn ok<R: Try<Output = ()>>(_: (), _: ()) -> R {
-            R::from_output(())
+            try_from_output!(())
         }
 
         self.map(op).try_reduce(<()>::default, ok)
@@ -499,7 +507,7 @@ pub trait ParallelIterator: Sized + Send {
         R: Try<Output = ()> + Send,
     {
         fn ok<R: Try<Output = ()>>(_: (), _: ()) -> R {
-            R::from_output(())
+            try_from_output!(())
         }
 
         self.map_with(init, op).try_reduce(<()>::default, ok)
@@ -541,7 +549,7 @@ pub trait ParallelIterator: Sized + Send {
         R: Try<Output = ()> + Send,
     {
         fn ok<R: Try<Output = ()>>(_: (), _: ()) -> R {
-            R::from_output(())
+            try_from_output!(())
         }
 
         self.map_init(init, op).try_reduce(<()>::default, ok)

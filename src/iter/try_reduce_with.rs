@@ -108,7 +108,7 @@ where
                 None => right?,
             };
             is_output = true;
-            T::from_output(output)
+            try_from_output!(output)
         })()); // TODO: try {}
         if !is_output {
             self.full.store(true, Ordering::Relaxed);

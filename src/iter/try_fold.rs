@@ -99,7 +99,7 @@ where
         TryFoldFolder {
             base: self.base.into_folder(),
             fold_op: self.fold_op,
-            acc: U::from_output((self.identity)()),
+            acc: try_from_output!((self.identity)()),
             is_output: true,
         }
     }
@@ -150,7 +150,7 @@ where
         self.acc = (|| {
             let output = fold_op(acc?, item)?;
             is_output = true;
-            U::from_output(output)
+            try_from_output!(output)
         })(); // TODO: try {}
         self.is_output = is_output;
         self
@@ -267,7 +267,7 @@ where
         TryFoldFolder {
             base: self.base.into_folder(),
             fold_op: self.fold_op,
-            acc: U::from_output(self.item),
+            acc: try_from_output!(self.item),
             is_output: true,
         }
     }

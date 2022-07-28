@@ -51,7 +51,7 @@ where
     fn into_folder(self) -> Self::Folder {
         TryReduceFolder {
             reduce_op: self.reduce_op,
-            item: T::from_output((self.identity)()),
+            item: try_from_output!((self.identity)()),
             full: self.full,
         }
     }
@@ -106,7 +106,7 @@ where
         self.item = (|| {
             let output = reduce_op(left?, right?)?;
             is_output = true;
-            T::from_output(output)
+            try_from_output!(output)
         })(); // TODO: try {}
         if !is_output {
             self.full.store(true, Ordering::Relaxed);
