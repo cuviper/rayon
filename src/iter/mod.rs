@@ -95,6 +95,10 @@ macro_rules! try_from_output {
     };
 }
 
+fn try_reduce_unit<R: Try<Output = ()>>(_: (), _: ()) -> R {
+    try_from_output!(())
+}
+
 #[cfg(test)]
 mod test;
 
@@ -466,11 +470,7 @@ pub trait ParallelIterator: Sized + Send {
         OP: Fn(Self::Item) -> R + Sync + Send,
         R: Try<Output = ()> + Send,
     {
-        fn ok<R: Try<Output = ()>>(_: (), _: ()) -> R {
-            try_from_output!(())
-        }
-
-        self.map(op).try_reduce(<()>::default, ok)
+        self.map(op).try_reduce(<()>::default, try_reduce_unit)
     }
 
     /// Executes a fallible `OP` on the given `init` value with each item
@@ -506,11 +506,8 @@ pub trait ParallelIterator: Sized + Send {
         T: Send + Clone,
         R: Try<Output = ()> + Send,
     {
-        fn ok<R: Try<Output = ()>>(_: (), _: ()) -> R {
-            try_from_output!(())
-        }
-
-        self.map_with(init, op).try_reduce(<()>::default, ok)
+        self.map_with(init, op)
+            .try_reduce(<()>::default, try_reduce_unit)
     }
 
     /// Executes a fallible `OP` on a value returned by `init` with each item
@@ -548,11 +545,8 @@ pub trait ParallelIterator: Sized + Send {
         INIT: Fn() -> T + Sync + Send,
         R: Try<Output = ()> + Send,
     {
-        fn ok<R: Try<Output = ()>>(_: (), _: ()) -> R {
-            try_from_output!(())
-        }
-
-        self.map_init(init, op).try_reduce(<()>::default, ok)
+        self.map_init(init, op)
+            .try_reduce(<()>::default, try_reduce_unit)
     }
 
     /// Counts the number of items in this parallel iterator.
