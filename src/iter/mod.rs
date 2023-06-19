@@ -407,7 +407,7 @@ pub trait ParallelIterator: Sized + Send {
         OP: Fn(&mut T, Self::Item) + Sync + Send,
         T: Send + Clone,
     {
-        self.map_with(init, op).collect()
+        self.map_with(init, op).drive_unindexed(noop::NoopConsumer)
     }
 
     /// Executes `OP` on a value returned by `init` with each item produced by
@@ -441,7 +441,7 @@ pub trait ParallelIterator: Sized + Send {
         OP: Fn(&mut T, Self::Item) + Sync + Send,
         INIT: Fn() -> T + Sync + Send,
     {
-        self.map_init(init, op).collect()
+        self.map_init(init, op).drive_unindexed(noop::NoopConsumer)
     }
 
     /// Executes a fallible `OP` on each item produced by the iterator, in parallel.

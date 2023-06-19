@@ -408,6 +408,8 @@ where
             self.right.reduce(left.1, right.1),
         )
     }
+
+    const HAS_EFFECT: bool = RA::HAS_EFFECT || RB::HAS_EFFECT;
 }
 
 impl<A, B, FromA, FromB> ParallelExtend<(A, B)> for (FromA, FromB)

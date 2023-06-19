@@ -339,4 +339,6 @@ where
     fn reduce(self, left: T, right: T) -> T {
         self.base.reduce(left, right)
     }
+
+    const HAS_EFFECT: bool = C::HAS_EFFECT;
 }

@@ -203,6 +203,9 @@ pub trait Reducer<Result> {
     /// Reduce two final results into one; this is executed after a
     /// split.
     fn reduce(self, left: Result, right: Result) -> Result;
+
+    /// If false, the reducer may be skipped entirely.
+    const HAS_EFFECT: bool = true;
 }
 
 /// A stateless consumer can be freely copied. These consumers can be
@@ -394,7 +397,13 @@ where
     C: Consumer<P::Item>,
 {
     let splitter = LengthSplitter::new(producer.min_len(), producer.max_len(), len);
-    return helper(len, false, splitter, producer, consumer);
+    if C::Reducer::HAS_EFFECT {
+        return helper(len, false, splitter, producer, consumer);
+    } else {
+        return crate::in_place_scope(move |scope| {
+            scoped(len, false, splitter, scope, producer, consumer)
+        });
+    }
 
     fn helper<P, C>(
         len: usize,
@@ -438,6 +447,45 @@ where
             producer.fold_with(consumer.into_folder()).complete()
         }
     }
+
+    fn scoped<'scope, P, C>(
+        mut len: usize,
+        migrated: bool,
+        mut splitter: LengthSplitter,
+        scope: &crate::Scope<'scope>,
+        mut producer: P,
+        mut consumer: C,
+    ) -> C::Result
+    where
+        P: Producer + 'scope,
+        C: Consumer<P::Item> + 'scope,
+    {
+        debug_assert!(!C::Reducer::HAS_EFFECT);
+        let current = crate::current_thread_index();
+        loop {
+            if consumer.full() {
+                return consumer.into_folder().complete();
+            } else if splitter.try_split(len, migrated) {
+                let mid = len / 2;
+                let (left_producer, right_producer) = producer.split_at(mid);
+                let (left_consumer, right_consumer, _reducer) = consumer.split_at(mid);
+                scope.spawn(move |scope| {
+                    let migrated = current != crate::current_thread_index();
+                    scoped(
+                        len - mid,
+                        migrated,
+                        splitter,
+                        scope,
+                        right_producer,
+                        right_consumer,
+                    );
+                });
+                (len, producer, consumer) = (mid, left_producer, left_consumer);
+            } else {
+                return producer.fold_with(consumer.into_folder()).complete();
+            }
+        }
+    }
 }
 
 /// A variant of [`bridge_producer_consumer`] where the producer is an unindexed producer.
@@ -449,7 +497,13 @@ where
     C: UnindexedConsumer<P::Item>,
 {
     let splitter = Splitter::new();
-    bridge_unindexed_producer_consumer(false, splitter, producer, consumer)
+    if C::Reducer::HAS_EFFECT {
+        bridge_unindexed_producer_consumer(false, splitter, producer, consumer)
+    } else {
+        crate::in_place_scope(move |scope| {
+            bridge_unindexed_scoped(false, splitter, scope, producer, consumer)
+        })
+    }
 }
 
 fn bridge_unindexed_producer_consumer<P, C>(
@@ -480,5 +534,45 @@ where
         }
     } else {
         producer.fold_with(consumer.into_folder()).complete()
+    }
+}
+
+fn bridge_unindexed_scoped<'scope, P, C>(
+    migrated: bool,
+    mut splitter: Splitter,
+    scope: &crate::Scope<'scope>,
+    mut producer: P,
+    mut consumer: C,
+) -> C::Result
+where
+    P: UnindexedProducer + 'scope,
+    C: UnindexedConsumer<P::Item> + 'scope,
+{
+    debug_assert!(!C::Reducer::HAS_EFFECT);
+    let current = crate::current_thread_index();
+    loop {
+        if consumer.full() {
+            return consumer.into_folder().complete();
+        } else if splitter.try_split(migrated) {
+            match producer.split() {
+                (left_producer, Some(right_producer)) => {
+                    let (left_consumer, right_consumer) = (consumer.split_off_left(), consumer);
+                    scope.spawn(move |scope| {
+                        let migrated = current != crate::current_thread_index();
+                        bridge_unindexed_scoped(
+                            migrated,
+                            splitter,
+                            scope,
+                            right_producer,
+                            right_consumer,
+                        );
+                    });
+                    (producer, consumer) = (left_producer, left_consumer);
+                }
+                (producer, None) => return producer.fold_with(consumer.into_folder()).complete(),
+            }
+        } else {
+            return producer.fold_with(consumer.into_folder()).complete();
+        }
     }
 }
