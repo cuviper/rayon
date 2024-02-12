@@ -97,3 +97,47 @@ fn build_scoped_tls_threadpool() {
         });
     });
 }
+
+#[test]
+#[should_panic(expected = "a scoped thread panicked")]
+#[cfg_attr(any(target_os = "emscripten", target_family = "wasm"), ignore)]
+fn build_scoped_panic() {
+    ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build_scoped(|_thread| panic!(), |_pool| ())
+        .expect("thread pool created");
+}
+
+#[test]
+#[should_panic(expected = "a scoped thread panicked")]
+#[cfg_attr(any(target_os = "emscripten", target_family = "wasm"), ignore)]
+fn build_scoped_panic_after() {
+    ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build_scoped(
+            |thread| {
+                thread.run();
+                panic!()
+            },
+            |pool| pool.install(|| dbg!()),
+        )
+        .expect("thread pool created");
+}
+
+#[test]
+#[should_panic(expected = "panic at the disco")]
+#[cfg_attr(any(target_os = "emscripten", target_family = "wasm"), ignore)]
+fn build_scoped_panic_within() {
+    ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build_scoped(
+            |thread| {
+                thread.run();
+                // The other panic should be propagated, rather than
+                // "a scoped thread panicked" from this one.
+                panic!()
+            },
+            |_pool| panic!("panic at the disco"),
+        )
+        .expect("thread pool created");
+}

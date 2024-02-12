@@ -334,7 +334,24 @@ impl ThreadPoolBuilder {
         W: Fn(ThreadBuilder) + Sync, // expected to call `run()`
         F: FnOnce(&ThreadPool) -> R,
     {
+        struct JoinOnDrop<'scope> {
+            handles: Vec<std::thread::ScopedJoinHandle<'scope, ()>>,
+        }
+
+        impl Drop for JoinOnDrop<'_> {
+            fn drop(&mut self) {
+                let mut panicked = false;
+                while let Some(h) = self.handles.pop() {
+                    panicked |= h.join().is_err();
+                }
+                if panicked && !thread::panicking() {
+                    panic!("a scoped thread panicked");
+                }
+            }
+        }
+
         std::thread::scope(|scope| {
+            let mut join_on_drop = JoinOnDrop { handles: vec![] };
             let pool = self
                 .spawn_handler(|thread| {
                     let mut builder = std::thread::Builder::new();
@@ -344,7 +361,8 @@ impl ThreadPoolBuilder {
                     if let Some(size) = thread.stack_size() {
                         builder = builder.stack_size(size);
                     }
-                    builder.spawn_scoped(scope, || wrapper(thread))?;
+                    let handle = builder.spawn_scoped(scope, || wrapper(thread))?;
+                    join_on_drop.handles.push(handle);
                     Ok(())
                 })
                 .build()?;
