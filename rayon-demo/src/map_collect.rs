@@ -181,6 +181,28 @@ mod util {
         })
     }
 
+    /// Fold unordered into hashmaps and then reduce them together.
+    pub fn fold_unordered<K, V, PI>(pi: PI) -> HashMap<K, V>
+    where
+        K: Send + Hash + Eq,
+        V: Send,
+        PI: ParallelIterator<Item = (K, V)> + Send,
+    {
+        pi.fold_unordered(HashMap::new, |mut map, (k, v)| {
+            map.insert(k, v);
+            map
+        })
+        .reduce(HashMap::new, |mut map1, mut map2| {
+            if map1.len() > map2.len() {
+                map1.extend(map2);
+                map1
+            } else {
+                map2.extend(map1);
+                map2
+            }
+        })
+    }
+
     /// Fold into vecs and then reduce them together as hashmaps.
     pub fn fold_vec<K, V, PI>(pi: PI) -> HashMap<K, V>
     where
@@ -271,6 +293,14 @@ macro_rules! make_bench {
             use crate::map_collect::util;
             let mut map = None;
             b.iter(|| map = Some(util::fold($generate())));
+            $check(&map.unwrap());
+        }
+
+        #[bench]
+        fn with_fold_unordered(b: &mut ::test::Bencher) {
+            use crate::map_collect::util;
+            let mut map = None;
+            b.iter(|| map = Some(util::fold_unordered($generate())));
             $check(&map.unwrap());
         }
 

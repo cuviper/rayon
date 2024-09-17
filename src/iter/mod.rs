@@ -123,6 +123,7 @@ mod flatten_iter;
 mod fold;
 mod fold_chunks;
 mod fold_chunks_with;
+mod fold_unordered;
 mod for_each;
 mod from_par_iter;
 mod inspect;
@@ -178,6 +179,7 @@ pub use self::{
     fold::{Fold, FoldWith},
     fold_chunks::FoldChunks,
     fold_chunks_with::FoldChunksWith,
+    fold_unordered::FoldUnordered,
     inspect::Inspect,
     interleave::Interleave,
     interleave_shortest::InterleaveShortest,
@@ -1270,6 +1272,16 @@ pub trait ParallelIterator: Sized + Send {
         T: Send,
     {
         Fold::new(self, identity, fold_op)
+    }
+
+    /// TODO
+    fn fold_unordered<T, ID, F>(self, identity: ID, fold_op: F) -> FoldUnordered<Self, ID, F>
+    where
+        F: Fn(T, Self::Item) -> T + Sync + Send,
+        ID: Fn() -> T + Sync + Send,
+        T: Send,
+    {
+        FoldUnordered::new(self, identity, fold_op)
     }
 
     /// Applies `fold_op` to the given `init` value with each item of this
