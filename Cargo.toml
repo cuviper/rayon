@@ -22,6 +22,7 @@ exclude = ["ci"]
 name = "rayon"
 
 [dependencies]
+indexmap = { version = "2", optional = true }
 rustc-rayon-core = { version = "0.5", path = "rayon-core" }
 
 # This is a public dependency!
