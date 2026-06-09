@@ -112,6 +112,7 @@ pub use rayon_core::ThreadPoolBuilder;
 pub use rayon_core::{BroadcastContext, broadcast, spawn_broadcast};
 pub use rayon_core::{Scope, in_place_scope, scope};
 pub use rayon_core::{ScopeFifo, in_place_scope_fifo, scope_fifo};
+pub use rayon_core::{TypedScope, typed_scope};
 pub use rayon_core::{Yield, yield_local, yield_now};
 pub use rayon_core::{current_num_threads, current_thread_index, max_num_threads};
 pub use rayon_core::{join, join_context};

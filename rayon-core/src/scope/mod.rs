@@ -8,6 +8,7 @@ use crate::job::{ArcJob, HeapJob, JobFifo, JobRef};
 use crate::latch::{CountLatch, Latch};
 use crate::registry::{Registry, WorkerThread, global_registry, in_worker};
 use crate::unwind;
+use crossbeam_deque::{Injector, Steal};
 use std::any::Any;
 use std::fmt;
 use std::marker::PhantomData;
@@ -31,6 +32,75 @@ pub struct Scope<'scope> {
 pub struct ScopeFifo<'scope> {
     base: ScopeBase<'scope>,
     fifos: Vec<JobFifo>,
+}
+
+#[allow(missing_debug_implementations, missing_docs)]
+pub struct TypedScope<'scope, T> {
+    base: ScopeBase<'scope>,
+    items: Injector<T>,
+    op: Box<dyn Fn(T, &Self) + Send + Sync + 'scope>,
+}
+
+/// Execute `init` to spawn initial work, then execute `op` for each work item.
+/// `op` can spawn additional work.
+///
+/// ```rust
+/// # use rayon_core as rayon;
+/// rayon::typed_scope(
+///     |scope| {
+///         for i in 1..10 {
+///             scope.add_work_item(i);
+///         }
+///     },
+///     |i, scope| {
+///         if dbg!(i) < 100 {
+///             scope.add_work_item(10 * i);
+///         }
+///     },
+/// );
+/// ```
+pub fn typed_scope<'scope, T, INIT, OP, R>(init: INIT, op: OP) -> R
+where
+    T: Send + 'scope,
+    INIT: FnOnce(&TypedScope<'scope, T>) -> R,
+    OP: Fn(T, &TypedScope<'scope, T>) + Send + Sync + 'scope,
+{
+    let (thread, registry) = get_in_place_thread_registry(None);
+    let scope = TypedScope::<'scope, T> {
+        base: ScopeBase::new(thread, registry),
+        items: Injector::new(),
+        op: Box::new(op),
+    };
+    scope.base.complete(thread, || init(&scope))
+}
+
+impl<'scope, T: Send + 'scope> crate::job::Job for TypedScope<'scope, T> {
+    unsafe fn execute(this: *const ()) {
+        unsafe {
+            let scope = &*(this as *const Self);
+            let item = loop {
+                match scope.items.steal() {
+                    Steal::Success(item) => break item,
+                    Steal::Empty => panic!(),
+                    Steal::Retry => {}
+                }
+            };
+            let op = &*scope.op;
+            ScopeBase::execute_job(&scope.base, move || op(item, scope))
+        }
+    }
+}
+
+#[allow(missing_docs)]
+impl<'scope, T: Send + 'scope> TypedScope<'scope, T> {
+    pub fn add_work_item(&self, item: T) {
+        self.items.push(item);
+        let job_ref = unsafe {
+            self.base.job_completed_latch.increment();
+            JobRef::new(self as *const Self)
+        };
+        self.base.registry.inject_or_push(job_ref);
+    }
 }
 
 struct ScopeBase<'scope> {
