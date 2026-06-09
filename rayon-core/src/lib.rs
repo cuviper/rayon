@@ -85,6 +85,7 @@ pub use self::join::{join, join_context};
 pub use self::registry::ThreadBuilder;
 pub use self::scope::{Scope, in_place_scope, scope};
 pub use self::scope::{ScopeFifo, in_place_scope_fifo, scope_fifo};
+pub use self::scope::{ScopeForEach, scope_for_each};
 pub use self::spawn::{spawn, spawn_fifo};
 pub use self::thread_pool::ThreadPool;
 pub use self::thread_pool::current_thread_has_pending_tasks;

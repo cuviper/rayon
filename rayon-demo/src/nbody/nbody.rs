@@ -166,6 +166,37 @@ impl NBodyBenchmark {
         out_bodies
     }
 
+    #[cfg(test)]
+    pub fn tick_scope_for_each(&mut self) -> &[Body] {
+        let (in_bodies, out_bodies) = if (self.time & 1) == 0 {
+            (&self.bodies.0, &mut self.bodies.1)
+        } else {
+            (&self.bodies.1, &mut self.bodies.0)
+        };
+
+        let time = self.time;
+        rayon::scope_for_each(
+            |scope| {
+                out_bodies
+                    .iter_mut()
+                    .zip(&in_bodies[..])
+                    .for_each(|pair| scope.push(pair));
+            },
+            |(out, prev), _scope| {
+                let (vel, vel2) = next_velocity(time, prev, in_bodies);
+                out.velocity = vel;
+                out.velocity2 = vel2;
+
+                let next_velocity = vel - vel2;
+                out.position = prev.position + next_velocity;
+            },
+        );
+
+        self.time += 1;
+
+        out_bodies
+    }
+
     pub fn tick_seq(&mut self) -> &[Body] {
         let (in_bodies, out_bodies) = if (self.time & 1) == 0 {
             (&self.bodies.0, &mut self.bodies.1)

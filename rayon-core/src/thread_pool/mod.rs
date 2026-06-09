@@ -1,6 +1,7 @@
 //! Contains support for user-managed thread pools, represented by the
 //! the [`ThreadPool`] type (see that struct for details).
 
+use crate::ScopeForEach;
 use crate::broadcast::{self, BroadcastContext};
 use crate::join;
 use crate::registry::{Registry, ThreadSpawn, WorkerThread};
@@ -301,6 +302,21 @@ impl ThreadPool {
         R: Send,
     {
         self.install(|| scope_fifo(op))
+    }
+
+    /// Execute `init` to push initial work, then execute `op` within this thread pool for each
+    /// work item. The `op` can push additional work as needed.
+    ///
+    /// See also: [the `scope_for_each()` function].
+    ///
+    /// [the `scope_for_each()` function]: crate::scope_for_each()
+    pub fn scope_for_each<'scope, T, INIT, OP, R>(&self, init: INIT, op: OP) -> R
+    where
+        T: Send + 'scope,
+        INIT: FnOnce(&ScopeForEach<'scope, T>) -> R,
+        OP: Fn(T, &ScopeForEach<'scope, T>) + Sync + 'scope,
+    {
+        ScopeForEach::with_registry(Some(&self.registry), init, op)
     }
 
     /// Creates a scope that spawns work into this thread pool.

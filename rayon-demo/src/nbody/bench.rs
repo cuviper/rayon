@@ -40,6 +40,13 @@ fn nbody_par_bridge(b: &mut ::test::Bencher) {
 }
 
 #[bench]
+fn nbody_scope_for_each(b: &mut ::test::Bencher) {
+    nbody_bench(b, |n| {
+        n.tick_scope_for_each();
+    });
+}
+
+#[bench]
 fn nbody_parreduce(b: &mut ::test::Bencher) {
     nbody_bench(b, |n| {
         n.tick_par_reduce();

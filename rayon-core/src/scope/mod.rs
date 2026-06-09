@@ -16,6 +16,9 @@ use std::ptr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
+mod for_each;
+pub use for_each::{ScopeForEach, scope_for_each};
+
 #[cfg(test)]
 mod test;
 
